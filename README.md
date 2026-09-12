@@ -43,12 +43,15 @@ For a local Android debug build:
 
 ```sh
 npm run build
-npx cap sync android
+CAP_SERVER_URL=http://127.0.0.1:8080 npx cap sync android
 (cd android && ./gradlew assembleDebug --no-daemon)
 ```
 
-The APK is written to `android/app/build/outputs/apk/debug/`. Build outputs,
-local configuration, and signing files are ignored by Git.
+The current Phase 1 APK loads the web client from a local Mac development
+server. Start that server with `npm run dev -- --host 0.0.0.0`, then set
+`CAP_SERVER_URL` to the Mac address before syncing. A packaged offline client is
+planned separately.
+
 
 ## Connecting to Hermes
 

@@ -13,7 +13,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: "app.hermes.companion",
   appName: "Hermes",
-  webDir: ".output/public",
+  webDir: "dist/client",
   android: {
     backgroundColor: "#141414",
     // The gateway may be plain http:// over Tailscale.

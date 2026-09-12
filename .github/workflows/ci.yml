@@ -37,6 +37,6 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: npm install
       - run: npm run build
-      - run: npx cap sync android
+      - run: CAP_SERVER_URL=http://127.0.0.1:8080 npx cap sync android
       - run: ./gradlew assembleDebug --no-daemon
         working-directory: android
