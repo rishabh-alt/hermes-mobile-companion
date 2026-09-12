@@ -13,6 +13,7 @@
     "format": "prettier --write 'src/**/*.{ts,tsx}' capacitor.config.ts eslint.config.js vite.config.ts"
   },
   "overrides": {
+    "lightningcss": "1.33.0",
     "rolldown": "1.2.1",
     "uuid": "11.1.1"
   },
@@ -102,6 +103,7 @@
     "vitest": "^5.0.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.2.1"
+    "@rolldown/binding-linux-x64-gnu": "1.2.1",
+    "lightningcss-linux-x64-gnu": "1.33.0"
   }
 }
