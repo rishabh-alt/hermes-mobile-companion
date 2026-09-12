@@ -7,27 +7,16 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * (Tailscale address or Cloudflare Tunnel URL), which you set inside the app
  * under Settings — nothing is hardcoded here.
  *
- * The app is served by the local Mac dev server during Phase 1. Set
- * CAP_SERVER_URL to the Mac's Tailscale URL before `npx cap sync android`.
+ * The complete interface is bundled into the APK. Only the Hermes gateway
+ * remains on the Mac and is configured by the user inside the app.
  */
 const config: CapacitorConfig = {
   appId: "app.hermes.companion",
   appName: "Hermes",
-  webDir: "dist/client",
+  webDir: "dist",
   android: {
     backgroundColor: "#141414",
-    // The gateway may be plain http:// over Tailscale.
-    allowMixedContent: true,
   },
-  ...(process.env.CAP_SERVER_URL
-    ? {
-        server: {
-          url: process.env.CAP_SERVER_URL,
-          cleartext: process.env.CAP_SERVER_URL.startsWith("http://"),
-          androidScheme: process.env.CAP_SERVER_URL.startsWith("https://") ? "https" : "http",
-        },
-      }
-    : {}),
 };
 
 export default config;

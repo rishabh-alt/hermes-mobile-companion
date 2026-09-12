@@ -1,5 +1,5 @@
 import type { HermesConfig } from "./types";
-import { normalizeBaseUrl } from "./client";
+import { parseSecureBaseUrl } from "./client";
 
 /**
  * JSON-RPC client for the Hermes gateway WebSocket — the same transport the
@@ -61,7 +61,7 @@ export class HermesRpc {
   }
 
   url() {
-    const base = normalizeBaseUrl(this.config.baseUrl);
+    const base = parseSecureBaseUrl(this.config.baseUrl);
     if (!base) return "";
     const ws = base.replace(/^http/, "ws");
     const token = this.config.token.trim();

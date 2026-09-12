@@ -63,12 +63,12 @@ function SettingsRoute() {
             id="baseUrl"
             inputMode="url"
             autoCapitalize="none"
-            placeholder="http://100.x.x.x:8642"
+            placeholder="https://your-mac.example.ts.net"
             value={config.baseUrl}
             onChange={(e) => update({ baseUrl: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Your Tailscale address or tunnel URL, including the port.
+            HTTPS Tailscale Serve or tunnel URL. Plain HTTP is rejected to protect your token.
           </p>
         </div>
 

@@ -22,6 +22,37 @@ export function normalizeBaseUrl(url: string) {
   return url.trim().replace(/\/+$/, "");
 }
 
+export function parseSecureBaseUrl(url: string) {
+  try {
+    const parsed = new URL(url.trim());
+    if (
+      parsed.protocol !== "https:" ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+export function isSecureBaseUrl(url: string) {
+  return parseSecureBaseUrl(url) !== null;
+}
+
+export function requireSecureBaseUrl(url: string) {
+  const base = parseSecureBaseUrl(url);
+  if (!base) {
+    throw new HermesError("Enter a valid HTTPS gateway URL. Plain HTTP is not allowed.");
+  }
+  return base;
+}
+
 function headers(config: HermesConfig, json = true): Record<string, string> {
   const h: Record<string, string> = {};
   if (json) h["Content-Type"] = "application/json";
@@ -30,8 +61,7 @@ function headers(config: HermesConfig, json = true): Record<string, string> {
 }
 
 async function request<T>(config: HermesConfig, path: string, init?: RequestInit): Promise<T> {
-  const base = normalizeBaseUrl(config.baseUrl);
-  if (!base) throw new HermesError("No gateway URL configured");
+  const base = requireSecureBaseUrl(config.baseUrl);
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
@@ -170,8 +200,7 @@ interface StreamArgs {
 }
 
 export async function streamChat({ config, model, messages, signal, handlers }: StreamArgs) {
-  const base = normalizeBaseUrl(config.baseUrl);
-  if (!base) throw new HermesError("No gateway URL configured");
+  const base = requireSecureBaseUrl(config.baseUrl);
 
   const body = {
     model,

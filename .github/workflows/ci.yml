@@ -18,8 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
       - run: npm run build
 
   android:
@@ -30,13 +32,13 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - uses: android-actions/setup-android@v3
-      - run: npm install
+      - run: npm ci
       - run: npm run build
-      - run: CAP_SERVER_URL=http://127.0.0.1:8080 npx cap sync android
+      - run: npx cap sync android
       - run: ./gradlew assembleDebug --no-daemon
         working-directory: android

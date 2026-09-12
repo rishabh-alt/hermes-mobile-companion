@@ -1,5 +1,5 @@
 import type { HermesConfig } from "./types";
-import { HermesError, normalizeBaseUrl } from "./client";
+import { HermesError, requireSecureBaseUrl } from "./client";
 
 /**
  * Thin client for the Hermes gateway REST surface (`/api/*`), matching the
@@ -25,8 +25,7 @@ export async function api<T>(
   path: string,
   opts: ApiOptions = {},
 ): Promise<T> {
-  const base = normalizeBaseUrl(config.baseUrl);
-  if (!base) throw new HermesError("No gateway URL configured");
+  const base = requireSecureBaseUrl(config.baseUrl);
 
   let url = `${base}${path}`;
   if (opts.profile) {

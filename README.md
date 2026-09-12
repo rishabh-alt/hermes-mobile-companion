@@ -43,22 +43,22 @@ For a local Android debug build:
 
 ```sh
 npm run build
-CAP_SERVER_URL=http://127.0.0.1:8080 npx cap sync android
+npx cap sync android
 (cd android && ./gradlew assembleDebug --no-daemon)
 ```
 
-The current Phase 1 APK loads the web client from a local Mac development
-server. Start that server with `npm run dev -- --host 0.0.0.0`, then set
-`CAP_SERVER_URL` to the Mac address before syncing. A packaged offline client is
-planned separately.
-
+The complete interface is bundled into the APK. The Mac only needs to run the
+Hermes gateway; no frontend development server is required after installation.
+The APK is written to `android/app/build/outputs/apk/debug/`.
 
 ## Connecting to Hermes
 
-Install Tailscale on both the Mac running Hermes and the Android phone. In the
-app's Settings, enter the gateway URL exposed by your setup and the gateway
-access token. Credentials are stored locally by the app and must never be
-committed here.
+Install Tailscale on both the Mac running Hermes and the Android phone. Expose
+the local gateway with Tailscale Serve, then enter its HTTPS URL and gateway
+access token in the app's Settings. Plain HTTP gateway URLs are rejected so the
+token is never transmitted without encryption. On Android, the token is encrypted
+with a non-exportable Android Keystore key; it is never written to WebView
+`localStorage`, and app-data backups are disabled.
 
 Do not copy the maintainer's hostname, token, `.env` file, or screenshots with
 private connection details into an issue or pull request.

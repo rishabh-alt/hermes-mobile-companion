@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { normalizeBaseUrl } from "./client";
+import { parseSecureBaseUrl } from "./client";
 import { createClientId } from "./ids";
 import type { HermesConfig } from "./types";
 
@@ -13,7 +13,7 @@ export interface AgentEvent {
 }
 
 function socketUrl(config: HermesConfig) {
-  const base = normalizeBaseUrl(config.baseUrl);
+  const base = parseSecureBaseUrl(config.baseUrl);
   if (!base) return null;
   const url = base.replace(/^http/, "ws") + "/ws";
   const token = config.token.trim();
