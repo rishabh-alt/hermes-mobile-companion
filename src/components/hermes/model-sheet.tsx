@@ -1,28 +1,29 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Cpu, RefreshCw, Zap } from "lucide-react";
+import { Check, ChevronDown, Cpu, RefreshCw, Search, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { fetchModels } from "@/lib/hermes/client";
-import { modelOptions } from "@/lib/hermes/rest";
+import { fetchModelOptions } from "@/lib/hermes/rest";
+import { visibleProviderModels } from "@/lib/hermes/route-picker";
 import { haptic } from "@/lib/hermes/haptics";
 import type { HermesConfig, ReasoningLevel } from "@/lib/hermes/types";
 import { cn } from "@/lib/utils";
+
+interface Selection {
+  provider: string;
+  model: string;
+}
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   config: HermesConfig;
   active?: string;
-  fallback?: string;
-  onSelect: (model: string) => void;
-  onSelectFallback: (model: string) => void;
+  activeProvider?: string;
+  onSelect: (selection: Selection) => Promise<void>;
   onUpdateConfig: (patch: Partial<HermesConfig>) => void;
-}
-
-interface Entry {
-  id: string;
-  label?: string | undefined;
 }
 
 const LEVELS: { value: ReasoningLevel; label: string }[] = [
@@ -32,46 +33,54 @@ const LEVELS: { value: ReasoningLevel; label: string }[] = [
   { value: "high", label: "High" },
 ];
 
-/** Prefers the gateway's own curated list, falling back to the raw model list. */
-async function loadModels(config: HermesConfig): Promise<Entry[]> {
-  try {
-    const options = await modelOptions(config);
-    const visible = options.filter((o) => !o.hidden && o.id);
-    if (visible.length) {
-      return visible.map((o) => ({ id: o.id, label: o.label ?? o.provider }));
-    }
-  } catch {
-    // gateway may not expose /api/model/options
-  }
-  const models = await fetchModels(config);
-  return models.map((m) => ({ id: m.id, label: m.owned_by }));
-}
-
 export function ModelSheet({
   open,
   onOpenChange,
   config,
   active,
-  fallback,
+  activeProvider,
   onSelect,
-  onSelectFallback,
   onUpdateConfig,
 }: Props) {
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [lockingModel, setLockingModel] = useState<string | null>(null);
   const models = useQuery({
-    queryKey: ["hermes-models", config.baseUrl, config.token],
-    queryFn: () => loadModels(config),
+    queryKey: ["hermes-model-options", config.baseUrl, config.token],
+    queryFn: () => fetchModelOptions(config),
     enabled: open && Boolean(config.baseUrl),
     retry: false,
   });
 
+  const providers = useMemo(
+    () => (models.data ? visibleProviderModels(models.data, search) : []),
+    [models.data, search],
+  );
+
+  const selectedProvider = activeProvider || models.data?.activeProvider || "";
+  const selectedModel = active || models.data?.activeModel || "";
+  const activeCapabilities = providers.find((provider) => provider.slug === selectedProvider)
+    ?.capabilities[selectedModel];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="top-auto bottom-0 max-h-[80dvh] translate-y-0 gap-3 overflow-y-auto rounded-b-none rounded-t-3xl border-border/70 p-5 sm:top-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
+      <DialogContent className="top-auto bottom-0 max-h-[88dvh] translate-y-0 gap-3 overflow-y-auto rounded-b-none rounded-t-3xl border-border/70 p-5 sm:top-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Cpu className="h-4 w-4 text-primary" /> Model &amp; route
           </DialogTitle>
         </DialogHeader>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search models or providers"
+            className="pl-9"
+          />
+        </div>
 
         <section className="space-y-3 rounded-xl bg-secondary/40 p-3">
           <div>
@@ -80,23 +89,29 @@ export function ModelSheet({
               How much Hermes thinks before answering.
             </p>
             <div className="mt-2 grid grid-cols-4 gap-1">
-              {LEVELS.map((level) => (
-                <button
-                  key={level.value}
-                  onClick={() => {
-                    haptic("tap");
-                    onUpdateConfig({ reasoning: level.value });
-                  }}
-                  className={cn(
-                    "rounded-lg px-2 py-1.5 text-xs transition-colors",
-                    config.reasoning === level.value
-                      ? "bg-primary/15 text-foreground"
-                      : "text-muted-foreground hover:bg-background/50",
-                  )}
-                >
-                  {level.label}
-                </button>
-              ))}
+              {LEVELS.map((level) => {
+                const unavailable =
+                  level.value === "off" && activeCapabilities?.canDisableReasoning === false;
+                return (
+                  <button
+                    key={level.value}
+                    disabled={unavailable}
+                    title={unavailable ? "This model cannot disable reasoning." : undefined}
+                    onClick={() => {
+                      haptic("tap");
+                      onUpdateConfig({ reasoning: level.value });
+                    }}
+                    className={cn(
+                      "rounded-lg px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                      config.reasoning === level.value
+                        ? "bg-primary/15 text-foreground"
+                        : "text-muted-foreground hover:bg-background/50",
+                    )}
+                  >
+                    {level.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -105,6 +120,7 @@ export function ModelSheet({
               <Zap className="h-4 w-4 text-muted-foreground" /> Fast mode
             </span>
             <Switch
+              disabled={activeCapabilities?.fast === false}
               checked={config.fastMode}
               onCheckedChange={(checked) => {
                 haptic("tap");
@@ -114,58 +130,114 @@ export function ModelSheet({
           </label>
         </section>
 
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            {models.data
+              ? `${providers.length} connected provider${providers.length === 1 ? "" : "s"}`
+              : ""}
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void models.refetch()}
+            disabled={models.isFetching}
+          >
+            <RefreshCw className={cn(models.isFetching && "animate-spin")} /> Refresh models
+          </Button>
+        </div>
+
         {models.isLoading && <p className="py-6 text-sm text-muted-foreground">Loading models…</p>}
         {models.isError && (
           <div className="space-y-3 py-4">
             <p className="text-sm text-destructive">{(models.error as Error).message}</p>
-            <Button variant="outline" size="sm" onClick={() => models.refetch()}>
+            <Button variant="outline" size="sm" onClick={() => void models.refetch()}>
               <RefreshCw /> Try again
             </Button>
           </div>
         )}
 
-        <div className="space-y-1">
-          {models.data?.map((model) => {
-            const isActive = model.id === active;
-            const isFallback = model.id === fallback;
+        {selectionError && <p className="text-sm text-destructive">{selectionError}</p>}
+
+        <div className="space-y-2">
+          {providers.map((provider) => {
+            const isOpen =
+              expanded === provider.slug || providers.length === 1 || Boolean(search.trim());
             return (
-              <div
-                key={model.id}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl border border-transparent px-3 py-2.5",
-                  isActive ? "border-primary/40 bg-primary/10" : "bg-secondary/40",
-                )}
+              <section
+                key={provider.slug}
+                className="overflow-hidden rounded-xl border border-border/70"
               >
                 <button
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => {
-                    haptic("tap");
-                    onSelect(model.id);
-                    onOpenChange(false);
-                  }}
+                  className="flex w-full items-center gap-2 px-3 py-3 text-left"
+                  onClick={() => setExpanded(isOpen ? null : provider.slug)}
                 >
-                  <p className="truncate text-sm font-medium">{model.id}</p>
-                  {model.label && (
-                    <p className="truncate text-[11px] text-muted-foreground">{model.label}</p>
-                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{provider.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {provider.models.length} models
+                      {provider.isCurrent ? " · current provider" : ""}
+                    </span>
+                  </span>
+                  <ChevronDown
+                    className={cn("h-4 w-4 transition-transform", isOpen && "rotate-180")}
+                  />
                 </button>
-                {isActive && <Check className="h-4 w-4 text-primary" />}
-                <Button
-                  size="sm"
-                  variant={isFallback ? "secondary" : "ghost"}
-                  className="shrink-0 text-[11px]"
-                  onClick={() => {
-                    haptic("tap");
-                    onSelectFallback(isFallback ? "" : model.id);
-                  }}
-                >
-                  {isFallback ? "Fallback" : "Set fallback"}
-                </Button>
-              </div>
+                {isOpen && (
+                  <div className="space-y-1 border-t border-border/70 p-2">
+                    {provider.models
+                      .filter(
+                        (model) =>
+                          !search.trim() ||
+                          provider.name.toLowerCase().includes(search.toLowerCase()) ||
+                          model.toLowerCase().includes(search.toLowerCase()),
+                      )
+                      .map((model) => {
+                        const isActive =
+                          provider.slug === selectedProvider && model === selectedModel;
+                        const unavailable = provider.unavailableModels.includes(model);
+                        return (
+                          <button
+                            key={model}
+                            disabled={unavailable || lockingModel !== null}
+                            onClick={() => {
+                              haptic("tap");
+                              setSelectionError(null);
+                              setLockingModel(`${provider.slug}/${model}`);
+                              void onSelect({ provider: provider.slug, model })
+                                .then(() => onOpenChange(false))
+                                .catch((error: unknown) => {
+                                  setSelectionError(
+                                    error instanceof Error
+                                      ? error.message
+                                      : "Hermes could not apply that route.",
+                                  );
+                                })
+                                .finally(() => setLockingModel(null));
+                            }}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-40",
+                              isActive ? "bg-primary/10 text-foreground" : "hover:bg-secondary/60",
+                            )}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{model}</span>
+                            {isActive && <Check className="h-4 w-4 text-primary" />}
+                            {unavailable && (
+                              <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+              </section>
             );
           })}
-          {models.data?.length === 0 && (
-            <p className="py-6 text-sm text-muted-foreground">The gateway listed no models.</p>
+          {models.data && providers.length === 0 && (
+            <p className="py-6 text-sm text-muted-foreground">
+              {search.trim()
+                ? "No connected models match that search."
+                : "No configured providers exposed models."}
+            </p>
           )}
         </div>
       </DialogContent>

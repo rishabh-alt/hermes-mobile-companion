@@ -24,6 +24,7 @@ beforeEach(() => {
       localStorage: {
         getItem: (key: string) => values.get(key) ?? null,
         setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
       },
       dispatchEvent: vi.fn(),
     },
@@ -55,5 +56,16 @@ describe("gateway token persistence", () => {
     expect(loaded.token).toBe("legacy-token");
     expect(secure.set).toHaveBeenCalledWith("legacy-token");
     expect(JSON.parse(values.get("hermes.config.v1") ?? "{}")).not.toHaveProperty("token");
+  });
+
+  it("purges legacy browser-stored session transcripts during secure config migration", async () => {
+    values.set(
+      "hermes.sessions.v1",
+      JSON.stringify([{ id: "old-local-session", messages: [{ text: "private" }] }]),
+    );
+
+    await loadConfig();
+
+    expect(values.has("hermes.sessions.v1")).toBe(false);
   });
 });

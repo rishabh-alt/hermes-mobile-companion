@@ -21,15 +21,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { haptic } from "@/lib/hermes/haptics";
 import {
-  createSession,
   deleteSession,
   groupSessions,
+  importGatewaySession,
   updateSession,
   useSessions,
 } from "@/lib/hermes/sessions";
 import type { Session } from "@/lib/hermes/types";
 import { useGateway } from "@/lib/hermes/useGateway";
 import { listProfiles, listSessions } from "@/lib/hermes/rest";
+import { createGatewaySession } from "@/lib/hermes/session-api";
+import { useHermesConfig } from "@/lib/hermes/config";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -46,6 +48,7 @@ const MENU = [
 ] as const;
 
 export function SessionDrawer({ activeId, onNavigate }: Props) {
+  const { config, configured } = useHermesConfig();
   const { sessions } = useSessions();
   const remote = useGateway((c) => listSessions(c, 40), []);
   const profiles = useGateway(listProfiles, ["drawer-profiles"]);
@@ -70,11 +73,16 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
     .filter((s) => !q || (s.title ?? "").toLowerCase().includes(q))
     .slice(0, 30);
 
-  const startNew = () => {
+  const startNew = async () => {
+    if (!configured) {
+      void navigate({ to: "/settings" });
+      return;
+    }
     haptic("tap");
-    const session = createSession();
+    const session = await createGatewaySession(config);
+    importGatewaySession(session.id, session.title ?? "New chat", [], session.model);
     onNavigate?.();
-    navigate({ to: "/c/$sessionId", params: { sessionId: session.id } });
+    void navigate({ to: "/c/$sessionId", params: { sessionId: session.id } });
   };
 
   const row = (session: Session) => {

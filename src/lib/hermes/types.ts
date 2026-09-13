@@ -40,6 +40,7 @@ export interface Session {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  provider?: string | undefined;
   model?: string | undefined;
   messages: HermesMessage[];
 }
@@ -49,6 +50,7 @@ export type ReasoningLevel = "off" | "low" | "medium" | "high";
 export interface HermesConfig {
   baseUrl: string;
   token: string;
+  provider: string;
   model: string;
   fallbackModel: string;
   wsEnabled: boolean;

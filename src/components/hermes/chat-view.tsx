@@ -18,12 +18,13 @@ import { ModelSheet } from "@/components/hermes/model-sheet";
 import { AttachmentAddButton, AttachmentPreviews } from "@/components/hermes/attachment-bar";
 import hermesMark from "@/assets/hermes-mark.png";
 import { Button } from "@/components/ui/button";
-import { fetchModels, HermesError, streamChat } from "@/lib/hermes/client";
+import { HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
-import { isMissing } from "@/lib/hermes/rest";
+import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
+import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
 import { createClientId } from "@/lib/hermes/ids";
@@ -55,6 +56,26 @@ async function toAttachment(file: {
   };
 }
 
+function toSessionContent(message: HermesMessage) {
+  const attachments = message.attachments ?? [];
+  if (!attachments.length) return message.text;
+  const content: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  > = [];
+  if (message.text.trim()) content.push({ type: "text", text: message.text });
+  for (const attachment of attachments) {
+    if (attachment.mediaType.startsWith("image/")) {
+      content.push({ type: "image_url", image_url: { url: attachment.url } });
+    } else {
+      content.push({
+        type: "text",
+        text: `[attached file: ${attachment.name} (${attachment.mediaType})]`,
+      });
+    }
+  }
+  return content;
+}
+
 export function ChatView({ sessionId }: { sessionId: string }) {
   const { config, configured, update } = useHermesConfig();
   const { session } = useSession(sessionId);
@@ -63,22 +84,27 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [modelSheet, setModelSheet] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
-  const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, configured && config.wsEnabled);
+  const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
 
+  const activeProvider = session?.provider || config.provider;
   const activeModel = session?.model || config.model;
   const messages = useMemo(() => session?.messages ?? [], [session]);
 
   useEffect(() => {
-    if (!configured || activeModel) return;
+    if (!configured || (activeModel && activeProvider)) return;
     let cancelled = false;
-    fetchModels(config)
-      .then((models) => {
-        const first = models[0]?.id;
-        if (!cancelled && first) {
-          updateSession(sessionId, { model: first });
-          update({ model: first });
+    void fetchModelOptions(config)
+      .then(async (options) => {
+        if (!options.activeProvider || !options.activeModel || cancelled) return;
+        const runtime = await lockSessionRuntime(config, sessionId, {
+          provider: options.activeProvider,
+          model: options.activeModel,
+        });
+        if (!cancelled && runtime.locked) {
+          updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
+          update({ provider: runtime.provider, model: runtime.model });
         }
       })
       .catch(() => undefined);
@@ -100,7 +126,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     setPullError(null);
     pullSession(config, sessionId)
       .catch((err: unknown) => {
-        if (cancelled || isMissing(err)) return;
+        if (cancelled) return;
+        if (isMissing(err)) {
+          setPullError("This session no longer exists on Hermes.");
+          return;
+        }
         setPullError((err as Error)?.message ?? "Couldn't reach your Mac.");
       })
       .finally(() => {
@@ -232,61 +262,35 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             .catch((err: Error) => finish(err));
         });
 
-      const attempt = (model: string) =>
-        streamChat({
+      const attempt = (model: string) => {
+        const prompt = history[history.length - 1];
+        return streamGatewaySession({
           config,
+          sessionId,
+          message: prompt ? toSessionContent(prompt) : "",
+          provider: activeProvider,
           model,
-          messages: history,
           signal: controller.signal,
           handlers: {
             onText: (delta) => {
               text += delta;
               push();
             },
-            onReasoning: (delta) => {
-              reasoning += delta;
+            onCompleted: (event) => {
+              if (event.content && !text) text = event.content;
               push();
             },
-            onTools: (next) => {
-              tools = next;
-              push();
+            onError: (message) => {
+              throw new HermesError(message);
             },
           },
         });
-
-      const start = async (model: string) => {
-        if (!config.wsEnabled) return attempt(model);
-        try {
-          await viaGateway(model);
-        } catch (err) {
-          const e = err as Error;
-          const unsupported =
-            /gateway-stream-unavailable|not connected|Method not found|Unknown method|timed out/i.test(
-              e?.message ?? "",
-            );
-          if (!unsupported || controller.signal.aborted || e?.name === "AbortError") throw err;
-          text = "";
-          reasoning = "";
-          tools = [];
-          await attempt(model);
-        }
       };
 
+      const start = async (model: string) => attempt(model);
+
       try {
-        try {
-          await start(activeModel);
-        } catch (err) {
-          const canFallback =
-            config.fallbackModel &&
-            config.fallbackModel !== activeModel &&
-            !controller.signal.aborted &&
-            (err as Error)?.name !== "AbortError";
-          if (!canFallback) throw err;
-          text = "";
-          reasoning = "";
-          tools = [];
-          await attempt(config.fallbackModel);
-        }
+        await start(activeModel);
         const finished: HermesMessage = {
           ...assistant,
           text,
@@ -324,6 +328,10 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     const text = message.text.trim();
     if (!text && !message.files.length) return;
     if (!configured) return;
+    if (!activeModel || !activeProvider) {
+      setModelSheet(true);
+      return;
+    }
     haptic("send");
 
     const attachments = await Promise.all(
@@ -452,7 +460,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               <PromptInputTextarea
                 autoFocus
                 placeholder={configured ? "Message Hermes…" : "Connect Hermes to start"}
-                disabled={!configured}
+                disabled={!configured || Boolean(pullError)}
               />
               <AttachmentPreviews />
               <PromptInputFooter className="justify-between">
@@ -477,7 +485,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                     : status === "error"
                       ? ({ status: "error" } as const)
                       : {})}
-                  disabled={!configured}
+                  disabled={!configured || Boolean(pullError)}
                   onStop={() => {
                     haptic("error");
                     abortRef.current?.abort();
@@ -522,12 +530,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         onOpenChange={setModelSheet}
         config={config}
         active={activeModel}
-        fallback={config.fallbackModel}
-        onSelect={(model) => {
-          updateSession(sessionId, { model });
-          update({ model });
+        activeProvider={activeProvider}
+        onSelect={async ({ provider, model }) => {
+          const runtime = await lockSessionRuntime(config, sessionId, { provider, model });
+          if (!runtime.locked) throw new Error("Hermes did not lock that route for this session.");
+          updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
+          update({ provider: runtime.provider, model: runtime.model });
         }}
-        onSelectFallback={(model) => update({ fallbackModel: model })}
         onUpdateConfig={(patch) => update(patch)}
       />
     </AppShell>
