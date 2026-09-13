@@ -26,9 +26,11 @@ import { pullSession } from "@/lib/hermes/session-sync";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
+import { createRunGuard } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
 import { createClientId } from "@/lib/hermes/ids";
 import type { Attachment, HermesMessage, ToolCall } from "@/lib/hermes/types";
+import { importGatewaySession } from "@/lib/hermes/sessions";
 import { AppShell } from "@/components/hermes/app-shell";
 import { Link } from "@tanstack/react-router";
 
@@ -87,6 +89,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
+  const submitGeneration = useRef(0);
+  const pullGeneration = useRef(0);
 
   const activeProvider = session?.provider || config.provider;
   const activeModel = session?.model || config.model;
@@ -111,10 +115,18 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [activeModel, config, configured, sessionId, update]);
+  }, [activeModel, activeProvider, config, configured, sessionId, update]);
 
+  const pullRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    return () => abortRef.current?.abort();
+    return () => {
+      // Invalidate both asynchronous lanes before a different session can render.
+      // A late stream completion or transcript pull must never overwrite it.
+      submitGeneration.current += 1;
+      pullGeneration.current += 1;
+      abortRef.current?.abort();
+      pullRef.current?.();
+    };
   }, [sessionId]);
 
   // A conversation tapped under "On your Mac" has no local copy yet — pull it.
@@ -122,11 +134,20 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     if (!configured) return;
     if (session && session.messages.length > 0) return;
     let cancelled = false;
+    const generation = pullGeneration.current;
     setPulling(true);
     setPullError(null);
+    pullRef.current = () => {
+      cancelled = true;
+    };
     pullSession(config, sessionId)
+      .then((messages) => {
+        if (cancelled || generation !== pullGeneration.current) return;
+        importGatewaySession(sessionId, session?.title ?? "Session", messages);
+        setPulling(false);
+      })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (cancelled || generation !== pullGeneration.current) return;
         if (isMissing(err)) {
           setPullError("This session no longer exists on Hermes.");
           return;
@@ -134,10 +155,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setPullError((err as Error)?.message ?? "Couldn't reach your Mac.");
       })
       .finally(() => {
-        if (!cancelled) setPulling(false);
+        if (!cancelled && generation === pullGeneration.current) setPulling(false);
       });
     return () => {
       cancelled = true;
+      pullRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, configured, config.baseUrl, config.token]);
@@ -147,6 +169,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       const controller = new AbortController();
       abortRef.current = controller;
       setStatus("submitted");
+      submitGeneration.current += 1;
+      const currentGeneration = submitGeneration.current;
 
       const assistant: HermesMessage = {
         id: newId(),
@@ -160,7 +184,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       let text = "";
       let reasoning = "";
       let tools: ToolCall[] = [];
+      const isCurrentRun = createRunGuard(
+        currentGeneration,
+        () => submitGeneration.current,
+        controller.signal,
+      );
       const push = () => {
+        if (!isCurrentRun()) return;
         setStatus("streaming");
         setLive({
           ...assistant,
@@ -288,19 +318,22 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       };
 
       const start = async (model: string) => attempt(model);
-
       try {
         await start(activeModel);
-        const finished: HermesMessage = {
-          ...assistant,
-          text,
-          reasoning: reasoning || undefined,
-          tools: tools.length ? tools : undefined,
-        };
-        setMessages(sessionId, [...history, finished]);
+        if (!isCurrentRun()) return;
+        const canonical = await pullSession(config, sessionId);
+        if (!isCurrentRun()) return;
+        importGatewaySession(
+          sessionId,
+          session?.title ?? "New chat",
+          canonical,
+          activeModel,
+          activeProvider,
+        );
         setStatus("idle");
         haptic("done");
       } catch (err) {
+        if (!isCurrentRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
         const finished: HermesMessage = {
           ...assistant,
@@ -317,17 +350,20 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setStatus(aborted ? "idle" : "error");
         if (!aborted) haptic("error");
       } finally {
-        setLive(null);
-        abortRef.current = null;
+        if (currentGeneration === submitGeneration.current) {
+          setLive(null);
+          if (abortRef.current === controller) abortRef.current = null;
+        }
       }
     },
-    [activeModel, config, sessionId],
+    [activeModel, activeProvider, config, rpcRef, session?.title, sessionId],
   );
 
   const send = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text && !message.files.length) return;
-    if (!configured) return;
+    const busy = status === "submitted" || status === "streaming";
+    if (!configured || pulling || pullError || busy) return;
     if (!activeModel || !activeProvider) {
       setModelSheet(true);
       return;
@@ -347,6 +383,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       createdAt: Date.now(),
     };
     const history = [...messages, user];
+    pullGeneration.current += 1;
     setMessages(sessionId, history);
     void run(history);
   };
@@ -507,6 +544,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
+          const busy = status === "submitted" || status === "streaming";
+          if (!configured || pulling || pullError || busy || !activeModel || !activeProvider) {
+            if (!busy && (!activeModel || !activeProvider)) setModelSheet(true);
+            return;
+          }
           const attachment = await toAttachment({
             url: URL.createObjectURL(file),
             filename: file.name,
@@ -520,6 +562,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             createdAt: Date.now(),
           };
           const history = [...messages, user];
+          pullGeneration.current += 1;
           setMessages(sessionId, history);
           void run(history);
         }}

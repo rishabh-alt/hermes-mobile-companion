@@ -29,7 +29,13 @@ import {
 } from "@/lib/hermes/sessions";
 import type { Session } from "@/lib/hermes/types";
 import { useGateway } from "@/lib/hermes/useGateway";
-import { listProfiles, listSessions } from "@/lib/hermes/rest";
+import { pullSession } from "@/lib/hermes/session-sync";
+import {
+  deleteSession as deleteGatewaySession,
+  listProfiles,
+  listSessions,
+  renameSession as renameGatewaySession,
+} from "@/lib/hermes/rest";
 import { createGatewaySession } from "@/lib/hermes/session-api";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { cn } from "@/lib/utils";
@@ -56,6 +62,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const filtered = useMemo(() => {
@@ -80,7 +87,8 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
     }
     haptic("tap");
     const session = await createGatewaySession(config);
-    importGatewaySession(session.id, session.title ?? "New chat", [], session.model);
+    const serverSession = await pullSession(config, session.id);
+    importGatewaySession(session.id, session.title ?? "New chat", serverSession, session.model);
     onNavigate?.();
     void navigate({ to: "/c/$sessionId", params: { sessionId: session.id } });
   };
@@ -98,9 +106,23 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
         {isRenaming ? (
           <form
             className="flex flex-1 items-center gap-1 py-1"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              updateSession(session.id, { title: draft.trim() || session.title });
+              const nextTitle = draft.trim() || session.title;
+              if (nextTitle !== session.title) {
+                try {
+                  setMutationError(null);
+                  await renameGatewaySession(config, session.id, nextTitle);
+                  const refreshed = await listSessions(config, 60);
+                  const authoritative = refreshed.find((item) => item.id === session.id);
+                  if (!authoritative) throw new Error("Hermes did not return the renamed session.");
+                  updateSession(session.id, { title: authoritative.title ?? nextTitle });
+                  remote.refresh();
+                } catch (err) {
+                  setMutationError((err as Error)?.message ?? "Couldn't rename this session.");
+                  return;
+                }
+              }
               setRenaming(null);
             }}
           >
@@ -167,10 +189,21 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 size="icon-sm"
                 variant="ghost"
                 aria-label="Delete chat"
-                onClick={() => {
+                onClick={async () => {
                   haptic("error");
-                  deleteSession(session.id);
-                  if (session.id === activeId) navigate({ to: "/" });
+                  try {
+                    setMutationError(null);
+                    await deleteGatewaySession(config, session.id);
+                    const refreshed = await listSessions(config, 60);
+                    if (refreshed.some((item) => item.id === session.id)) {
+                      throw new Error("Hermes did not confirm deletion of this session.");
+                    }
+                    deleteSession(session.id);
+                    remote.refresh();
+                    if (session.id === activeId) navigate({ to: "/" });
+                  } catch (err) {
+                    setMutationError((err as Error)?.message ?? "Couldn't delete this session.");
+                  }
                 }}
               >
                 <Trash2 />
@@ -206,6 +239,14 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+        {mutationError && (
+          <p
+            role="alert"
+            className="mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {mutationError}
+          </p>
+        )}
         {tab === "bots" ? (
           <div className="px-1 py-2 text-sm">
             <Link
