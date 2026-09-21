@@ -18,16 +18,19 @@ import { ModelSheet } from "@/components/hermes/model-sheet";
 import { AttachmentAddButton, AttachmentPreviews } from "@/components/hermes/attachment-bar";
 import hermesMark from "@/assets/hermes-mark.png";
 import { Button } from "@/components/ui/button";
-import { fetchModels, HermesError, streamChat } from "@/lib/hermes/client";
+import { HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
-import { isMissing } from "@/lib/hermes/rest";
+import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
+import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
+import { createRunGuard } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
 import { createClientId } from "@/lib/hermes/ids";
 import type { Attachment, HermesMessage, ToolCall } from "@/lib/hermes/types";
+import { importGatewaySession } from "@/lib/hermes/sessions";
 import { AppShell } from "@/components/hermes/app-shell";
 import { Link } from "@tanstack/react-router";
 
@@ -55,6 +58,26 @@ async function toAttachment(file: {
   };
 }
 
+function toSessionContent(message: HermesMessage) {
+  const attachments = message.attachments ?? [];
+  if (!attachments.length) return message.text;
+  const content: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  > = [];
+  if (message.text.trim()) content.push({ type: "text", text: message.text });
+  for (const attachment of attachments) {
+    if (attachment.mediaType.startsWith("image/")) {
+      content.push({ type: "image_url", image_url: { url: attachment.url } });
+    } else {
+      content.push({
+        type: "text",
+        text: `[attached file: ${attachment.name} (${attachment.mediaType})]`,
+      });
+    }
+  }
+  return content;
+}
+
 export function ChatView({ sessionId }: { sessionId: string }) {
   const { config, configured, update } = useHermesConfig();
   const { session } = useSession(sessionId);
@@ -63,32 +86,47 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [modelSheet, setModelSheet] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
-  const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, configured && config.wsEnabled);
+  const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
+  const submitGeneration = useRef(0);
+  const pullGeneration = useRef(0);
 
+  const activeProvider = session?.provider || config.provider;
   const activeModel = session?.model || config.model;
   const messages = useMemo(() => session?.messages ?? [], [session]);
 
   useEffect(() => {
-    if (!configured || activeModel) return;
+    if (!configured || (activeModel && activeProvider)) return;
     let cancelled = false;
-    fetchModels(config)
-      .then((models) => {
-        const first = models[0]?.id;
-        if (!cancelled && first) {
-          updateSession(sessionId, { model: first });
-          update({ model: first });
+    void fetchModelOptions(config)
+      .then(async (options) => {
+        if (!options.activeProvider || !options.activeModel || cancelled) return;
+        const runtime = await lockSessionRuntime(config, sessionId, {
+          provider: options.activeProvider,
+          model: options.activeModel,
+        });
+        if (!cancelled && runtime.locked) {
+          updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
+          update({ provider: runtime.provider, model: runtime.model });
         }
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeModel, config, configured, sessionId, update]);
+  }, [activeModel, activeProvider, config, configured, sessionId, update]);
 
+  const pullRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    return () => abortRef.current?.abort();
+    return () => {
+      // Invalidate both asynchronous lanes before a different session can render.
+      // A late stream completion or transcript pull must never overwrite it.
+      submitGeneration.current += 1;
+      pullGeneration.current += 1;
+      abortRef.current?.abort();
+      pullRef.current?.();
+    };
   }, [sessionId]);
 
   // A conversation tapped under "On your Mac" has no local copy yet — pull it.
@@ -96,18 +134,32 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     if (!configured) return;
     if (session && session.messages.length > 0) return;
     let cancelled = false;
+    const generation = pullGeneration.current;
     setPulling(true);
     setPullError(null);
+    pullRef.current = () => {
+      cancelled = true;
+    };
     pullSession(config, sessionId)
+      .then((messages) => {
+        if (cancelled || generation !== pullGeneration.current) return;
+        importGatewaySession(sessionId, session?.title ?? "Session", messages);
+        setPulling(false);
+      })
       .catch((err: unknown) => {
-        if (cancelled || isMissing(err)) return;
+        if (cancelled || generation !== pullGeneration.current) return;
+        if (isMissing(err)) {
+          setPullError("This session no longer exists on Hermes.");
+          return;
+        }
         setPullError((err as Error)?.message ?? "Couldn't reach your Mac.");
       })
       .finally(() => {
-        if (!cancelled) setPulling(false);
+        if (!cancelled && generation === pullGeneration.current) setPulling(false);
       });
     return () => {
       cancelled = true;
+      pullRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, configured, config.baseUrl, config.token]);
@@ -117,6 +169,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       const controller = new AbortController();
       abortRef.current = controller;
       setStatus("submitted");
+      submitGeneration.current += 1;
+      const currentGeneration = submitGeneration.current;
 
       const assistant: HermesMessage = {
         id: newId(),
@@ -130,7 +184,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       let text = "";
       let reasoning = "";
       let tools: ToolCall[] = [];
+      const isCurrentRun = createRunGuard(
+        currentGeneration,
+        () => submitGeneration.current,
+        controller.signal,
+      );
       const push = () => {
+        if (!isCurrentRun()) return;
         setStatus("streaming");
         setLive({
           ...assistant,
@@ -232,71 +292,48 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             .catch((err: Error) => finish(err));
         });
 
-      const attempt = (model: string) =>
-        streamChat({
+      const attempt = (model: string) => {
+        const prompt = history[history.length - 1];
+        return streamGatewaySession({
           config,
+          sessionId,
+          message: prompt ? toSessionContent(prompt) : "",
+          provider: activeProvider,
           model,
-          messages: history,
           signal: controller.signal,
           handlers: {
             onText: (delta) => {
               text += delta;
               push();
             },
-            onReasoning: (delta) => {
-              reasoning += delta;
+            onCompleted: (event) => {
+              if (event.content && !text) text = event.content;
               push();
             },
-            onTools: (next) => {
-              tools = next;
-              push();
+            onError: (message) => {
+              throw new HermesError(message);
             },
           },
         });
-
-      const start = async (model: string) => {
-        if (!config.wsEnabled) return attempt(model);
-        try {
-          await viaGateway(model);
-        } catch (err) {
-          const e = err as Error;
-          const unsupported =
-            /gateway-stream-unavailable|not connected|Method not found|Unknown method|timed out/i.test(
-              e?.message ?? "",
-            );
-          if (!unsupported || controller.signal.aborted || e?.name === "AbortError") throw err;
-          text = "";
-          reasoning = "";
-          tools = [];
-          await attempt(model);
-        }
       };
 
+      const start = async (model: string) => attempt(model);
       try {
-        try {
-          await start(activeModel);
-        } catch (err) {
-          const canFallback =
-            config.fallbackModel &&
-            config.fallbackModel !== activeModel &&
-            !controller.signal.aborted &&
-            (err as Error)?.name !== "AbortError";
-          if (!canFallback) throw err;
-          text = "";
-          reasoning = "";
-          tools = [];
-          await attempt(config.fallbackModel);
-        }
-        const finished: HermesMessage = {
-          ...assistant,
-          text,
-          reasoning: reasoning || undefined,
-          tools: tools.length ? tools : undefined,
-        };
-        setMessages(sessionId, [...history, finished]);
+        await start(activeModel);
+        if (!isCurrentRun()) return;
+        const canonical = await pullSession(config, sessionId);
+        if (!isCurrentRun()) return;
+        importGatewaySession(
+          sessionId,
+          session?.title ?? "New chat",
+          canonical,
+          activeModel,
+          activeProvider,
+        );
         setStatus("idle");
         haptic("done");
       } catch (err) {
+        if (!isCurrentRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
         const finished: HermesMessage = {
           ...assistant,
@@ -313,17 +350,24 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setStatus(aborted ? "idle" : "error");
         if (!aborted) haptic("error");
       } finally {
-        setLive(null);
-        abortRef.current = null;
+        if (currentGeneration === submitGeneration.current) {
+          setLive(null);
+          if (abortRef.current === controller) abortRef.current = null;
+        }
       }
     },
-    [activeModel, config, sessionId],
+    [activeModel, activeProvider, config, rpcRef, session?.title, sessionId],
   );
 
   const send = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text && !message.files.length) return;
-    if (!configured) return;
+    const busy = status === "submitted" || status === "streaming";
+    if (!configured || pulling || pullError || busy) return;
+    if (!activeModel || !activeProvider) {
+      setModelSheet(true);
+      return;
+    }
     haptic("send");
 
     const attachments = await Promise.all(
@@ -339,6 +383,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       createdAt: Date.now(),
     };
     const history = [...messages, user];
+    pullGeneration.current += 1;
     setMessages(sessionId, history);
     void run(history);
   };
@@ -452,7 +497,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               <PromptInputTextarea
                 autoFocus
                 placeholder={configured ? "Message Hermes…" : "Connect Hermes to start"}
-                disabled={!configured}
+                disabled={!configured || Boolean(pullError)}
               />
               <AttachmentPreviews />
               <PromptInputFooter className="justify-between">
@@ -477,7 +522,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                     : status === "error"
                       ? ({ status: "error" } as const)
                       : {})}
-                  disabled={!configured}
+                  disabled={!configured || Boolean(pullError)}
                   onStop={() => {
                     haptic("error");
                     abortRef.current?.abort();
@@ -499,6 +544,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
+          const busy = status === "submitted" || status === "streaming";
+          if (!configured || pulling || pullError || busy || !activeModel || !activeProvider) {
+            if (!busy && (!activeModel || !activeProvider)) setModelSheet(true);
+            return;
+          }
           const attachment = await toAttachment({
             url: URL.createObjectURL(file),
             filename: file.name,
@@ -512,6 +562,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             createdAt: Date.now(),
           };
           const history = [...messages, user];
+          pullGeneration.current += 1;
           setMessages(sessionId, history);
           void run(history);
         }}
@@ -522,12 +573,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         onOpenChange={setModelSheet}
         config={config}
         active={activeModel}
-        fallback={config.fallbackModel}
-        onSelect={(model) => {
-          updateSession(sessionId, { model });
-          update({ model });
+        activeProvider={activeProvider}
+        onSelect={async ({ provider, model }) => {
+          const runtime = await lockSessionRuntime(config, sessionId, { provider, model });
+          if (!runtime.locked) throw new Error("Hermes did not lock that route for this session.");
+          updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
+          update({ provider: runtime.provider, model: runtime.model });
         }}
-        onSelectFallback={(model) => update({ fallbackModel: model })}
         onUpdateConfig={(patch) => update(patch)}
       />
     </AppShell>

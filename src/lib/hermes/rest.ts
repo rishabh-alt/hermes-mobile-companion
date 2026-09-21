@@ -1,5 +1,6 @@
 import type { HermesConfig } from "./types";
 import { HermesError, requireSecureBaseUrl } from "./client";
+import { parseModelOptions, type ModelOptionsSnapshot } from "./model-options";
 
 /**
  * Thin client for the Hermes gateway REST surface (`/api/*`), matching the
@@ -348,7 +349,23 @@ export interface ModelOption {
   hidden?: boolean;
 }
 
+export async function fetchModelOptions(
+  config: HermesConfig,
+  { refresh = false }: { refresh?: boolean } = {},
+): Promise<ModelOptionsSnapshot> {
+  const payload = await api<unknown>(config, `/api/model/options${refresh ? "?refresh=1" : ""}`);
+  return parseModelOptions(payload);
+}
+
+/** @deprecated Use fetchModelOptions for the complete typed gateway inventory. */
 export async function modelOptions(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/model/options");
-  return list<ModelOption>(data, "models", "options");
+  const snapshot = await fetchModelOptions(config);
+  return snapshot.providers.flatMap((provider) =>
+    provider.models.map((id) => ({
+      id,
+      provider: provider.slug,
+      label: provider.name,
+      hidden: !provider.authenticated,
+    })),
+  );
 }

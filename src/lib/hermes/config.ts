@@ -10,6 +10,7 @@ let tokenWriteQueue = Promise.resolve();
 export const defaultConfig: HermesConfig = {
   baseUrl: "",
   token: "",
+  provider: "",
   model: "",
   fallbackModel: "",
   wsEnabled: true,
@@ -46,7 +47,11 @@ export async function loadConfig(): Promise<HermesConfig> {
     runtimeToken = legacyToken;
   }
   const config = { ...defaultConfig, ...stored, token: runtimeToken };
-  if (typeof window !== "undefined") persistPublicConfig(config);
+  if (typeof window !== "undefined") {
+    // Session transcripts are server-owned now; never retain old WebView copies after upgrade.
+    window.localStorage.removeItem("hermes.sessions.v1");
+    persistPublicConfig(config);
+  }
   return config;
 }
 

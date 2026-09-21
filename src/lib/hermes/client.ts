@@ -193,16 +193,25 @@ export interface StreamHandlers {
 
 interface StreamArgs {
   config: HermesConfig;
+  provider?: string;
   model: string;
   messages: HermesMessage[];
   signal: AbortSignal;
   handlers: StreamHandlers;
 }
 
-export async function streamChat({ config, model, messages, signal, handlers }: StreamArgs) {
+export async function streamChat({
+  config,
+  provider,
+  model,
+  messages,
+  signal,
+  handlers,
+}: StreamArgs) {
   const base = requireSecureBaseUrl(config.baseUrl);
 
   const body = {
+    ...(provider ? { provider } : {}),
     model,
     stream: true,
     messages: messages.map((m) => ({ role: m.role, content: toApiContent(m) })),
