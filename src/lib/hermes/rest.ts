@@ -1,6 +1,7 @@
 import type { HermesConfig } from "./types";
-import { HermesError, requireSecureBaseUrl } from "./client";
+import { HermesError } from "./client";
 import { parseModelOptions, type ModelOptionsSnapshot } from "./model-options";
+import { composeGatewayUrl, parseProfileInventory } from "./profiles";
 
 /**
  * Thin client for the Hermes gateway REST surface (`/api/*`), matching the
@@ -17,7 +18,7 @@ function authHeaders(config: HermesConfig, json = true): Record<string, string> 
 export interface ApiOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
-  profile?: string | null;
+  root?: boolean;
   signal?: AbortSignal;
 }
 
@@ -26,12 +27,7 @@ export async function api<T>(
   path: string,
   opts: ApiOptions = {},
 ): Promise<T> {
-  const base = requireSecureBaseUrl(config.baseUrl);
-
-  let url = `${base}${path}`;
-  if (opts.profile) {
-    url += `${url.includes("?") ? "&" : "?"}profile=${encodeURIComponent(opts.profile)}`;
-  }
+  const url = composeGatewayUrl(config, path, { root: opts.root ?? false });
 
   let res: Response;
   try {
@@ -112,10 +108,16 @@ export interface GatewayMessage {
   model?: string;
 }
 
-export async function fetchSessionMessages(config: HermesConfig, id: string, limit = 200) {
+export async function fetchSessionMessages(
+  config: HermesConfig,
+  id: string,
+  limit = 200,
+  signal?: AbortSignal,
+) {
   const data = await api<unknown>(
     config,
     `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}`,
+    signal ? { signal } : {},
   );
   return list<GatewayMessage>(data, "messages");
 }
@@ -320,9 +322,13 @@ export interface Profile {
   path?: string;
 }
 
+export async function fetchProfileInventory(config: HermesConfig) {
+  const data = await api<unknown>(config, "/api/profiles", { root: true });
+  return parseProfileInventory(data);
+}
+
 export async function listProfiles(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/profiles");
-  return list<Profile>(data, "profiles");
+  return (await fetchProfileInventory(config)).profiles;
 }
 
 export function profileSoul(config: HermesConfig, name: string) {

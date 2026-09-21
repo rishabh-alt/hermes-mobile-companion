@@ -47,7 +47,13 @@ export function ModelSheet({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [lockingModel, setLockingModel] = useState<string | null>(null);
   const models = useQuery({
-    queryKey: ["hermes-model-options", config.baseUrl, config.token],
+    queryKey: [
+      "hermes-model-options",
+      config.baseUrl,
+      config.token,
+      config.activeProfile,
+      config.profilePathPrefix,
+    ],
     queryFn: () => fetchModelOptions(config),
     enabled: open && Boolean(config.baseUrl),
     retry: false,

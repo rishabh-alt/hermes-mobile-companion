@@ -53,8 +53,9 @@ export function useGateway<T>(
     return () => {
       cancelled = true;
     };
+    // The caller-owned dependency list intentionally extends the stable config key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, configured, config.baseUrl, config.token, nonce, ...deps]);
+  }, [ready, configured, config, nonce, ...deps]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRunGuard } from "./run-guard";
+import { createRunGuard, ProfileRunBoundary } from "./run-guard";
 
 describe("createRunGuard", () => {
   it("rejects stream callbacks after a newer generation starts", () => {
@@ -19,5 +19,27 @@ describe("createRunGuard", () => {
     expect(isCurrent()).toBe(true);
     controller.abort();
     expect(isCurrent()).toBe(false);
+  });
+});
+
+describe("ProfileRunBoundary", () => {
+  it("aborts registered work and invalidates stale generation callbacks", () => {
+    const boundary = new ProfileRunBoundary();
+    const run = boundary.start();
+
+    expect(run.isCurrent()).toBe(true);
+    boundary.invalidate();
+
+    expect(run.signal.aborted).toBe(true);
+    expect(run.isCurrent()).toBe(false);
+  });
+
+  it("does not abort work started in the new profile generation", () => {
+    const boundary = new ProfileRunBoundary();
+    boundary.invalidate();
+    const run = boundary.start();
+
+    expect(run.generation).toBe(1);
+    expect(run.isCurrent()).toBe(true);
   });
 });

@@ -11,10 +11,12 @@ vi.mock("./secure-storage", () => ({
 }));
 
 import { defaultConfig, loadConfig, writeConfig } from "./config";
+import { activeSessionProfile, activateSessionProfile } from "./sessions";
 
 const values = new Map<string, string>();
 
 beforeEach(() => {
+  activateSessionProfile("default");
   values.clear();
   secure.get.mockReset().mockResolvedValue("");
   secure.set.mockReset().mockResolvedValue();
@@ -67,5 +69,21 @@ describe("gateway token persistence", () => {
     await loadConfig();
 
     expect(values.has("hermes.sessions.v1")).toBe(false);
+  });
+
+  it("persists the public active profile and activates its isolated render cache", () => {
+    writeConfig({
+      ...defaultConfig,
+      baseUrl: "https://example.com",
+      activeProfile: "research",
+      profilePathPrefix: "/p/research",
+    });
+
+    expect(JSON.parse(values.get("hermes.config.v1") ?? "{}")).toMatchObject({
+      baseUrl: "https://example.com",
+      activeProfile: "research",
+      profilePathPrefix: "/p/research",
+    });
+    expect(activeSessionProfile()).toBe("research");
   });
 });

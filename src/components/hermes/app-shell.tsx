@@ -1,4 +1,5 @@
-import { Menu } from "lucide-react";
+import { Menu, Settings } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import { SessionDrawer } from "@/components/hermes/session-drawer";
 import { Button } from "@/components/ui/button";
@@ -78,6 +79,13 @@ export function AppShell({ title, subtitle, right, activeSessionId, children }: 
             )}
           </div>
           {right}
+          <Link
+            to="/settings"
+            aria-label="Settings"
+            className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Settings className="h-5 w-5" />
+          </Link>
         </header>
         <main className="min-h-0 flex-1">{children}</main>
       </div>

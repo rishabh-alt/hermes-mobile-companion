@@ -58,4 +58,23 @@ describe("createGatewaySession", () => {
     });
     expect(runtime).toEqual({ provider: "openai-codex", model: "gpt-5.6-terra", locked: true });
   });
+
+  it("routes session creation through the selected named profile", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ session: { id: "research-session" } }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createGatewaySession({
+      ...defaultConfig,
+      baseUrl: "https://example.com",
+      activeProfile: "research",
+      profilePathPrefix: "/p/research",
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://example.com/p/research/api/sessions");
+  });
 });

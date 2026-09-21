@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import type { HermesConfig } from "./types";
 import { isSecureBaseUrl } from "./client";
 import { getSecureToken, setSecureToken } from "./secure-storage";
+import { validateProfilePathPrefix } from "./profiles";
+import { activateSessionProfile } from "./sessions";
+import { profileRunBoundary } from "./run-guard";
 
 const KEY = "hermes.config.v1";
 let runtimeToken = "";
@@ -10,6 +13,8 @@ let tokenWriteQueue = Promise.resolve();
 export const defaultConfig: HermesConfig = {
   baseUrl: "",
   token: "",
+  activeProfile: "default",
+  profilePathPrefix: "",
   provider: "",
   model: "",
   fallbackModel: "",
@@ -47,6 +52,12 @@ export async function loadConfig(): Promise<HermesConfig> {
     runtimeToken = legacyToken;
   }
   const config = { ...defaultConfig, ...stored, token: runtimeToken };
+  validateProfilePathPrefix(
+    config.activeProfile,
+    config.profilePathPrefix,
+    config.activeProfile === "default",
+  );
+  activateSessionProfile(config.activeProfile);
   if (typeof window !== "undefined") {
     // Session transcripts are server-owned now; never retain old WebView copies after upgrade.
     window.localStorage.removeItem("hermes.sessions.v1");
@@ -57,8 +68,16 @@ export async function loadConfig(): Promise<HermesConfig> {
 
 export function writeConfig(config: HermesConfig) {
   if (typeof window === "undefined") return;
+  validateProfilePathPrefix(
+    config.activeProfile,
+    config.profilePathPrefix,
+    config.activeProfile === "default",
+  );
+  const previousProfile = readConfig().activeProfile;
   runtimeToken = config.token;
   persistPublicConfig(config);
+  if (previousProfile !== config.activeProfile) profileRunBoundary.invalidate();
+  activateSessionProfile(config.activeProfile);
   tokenWriteQueue = tokenWriteQueue.then(() => setSecureToken(runtimeToken)).catch(() => undefined);
   window.dispatchEvent(new CustomEvent("hermes-config-change"));
 }

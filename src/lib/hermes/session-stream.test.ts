@@ -87,4 +87,32 @@ describe("streamGatewaySession", () => {
       { type: "image_url", image_url: { url: "data:image/png;base64,AA==" } },
     ]);
   });
+
+  it("routes streams through the selected named profile", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('event: assistant.completed\ndata: {"content":"ok"}\n\n', { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await streamGatewaySession({
+      config: {
+        ...defaultConfig,
+        baseUrl: "https://example.com",
+        activeProfile: "research",
+        profilePathPrefix: "/p/research",
+      },
+      sessionId: "server-session",
+      message: "Hi",
+      provider: "openai-codex",
+      model: "gpt-5.6-terra",
+      signal: new AbortController().signal,
+      handlers: { onText: vi.fn(), onCompleted: vi.fn(), onError: vi.fn() },
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://example.com/p/research/api/sessions/server-session/chat/stream",
+    );
+  });
 });

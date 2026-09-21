@@ -26,7 +26,7 @@ import { pullSession } from "@/lib/hermes/session-sync";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
-import { createRunGuard } from "@/lib/hermes/run-guard";
+import { createRunGuard, profileRunBoundary } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
 import { createClientId } from "@/lib/hermes/ids";
 import type { Attachment, HermesMessage, ToolCall } from "@/lib/hermes/types";
@@ -84,7 +84,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [status, setStatus] = useState<Status>("idle");
   const [live, setLive] = useState<HermesMessage | null>(null);
   const [modelSheet, setModelSheet] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<{ abort: () => void } | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
   const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
@@ -127,27 +127,29 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       abortRef.current?.abort();
       pullRef.current?.();
     };
-  }, [sessionId]);
+  }, [sessionId, config.activeProfile, config.profilePathPrefix]);
 
   // A conversation tapped under "On your Mac" has no local copy yet — pull it.
   useEffect(() => {
     if (!configured) return;
     if (session && session.messages.length > 0) return;
     let cancelled = false;
+    const profileRun = profileRunBoundary.start();
     const generation = pullGeneration.current;
     setPulling(true);
     setPullError(null);
+    setLive(null);
     pullRef.current = () => {
       cancelled = true;
     };
-    pullSession(config, sessionId)
+    pullSession(config, sessionId, profileRun.signal)
       .then((messages) => {
-        if (cancelled || generation !== pullGeneration.current) return;
+        if (cancelled || generation !== pullGeneration.current || !profileRun.isCurrent()) return;
         importGatewaySession(sessionId, session?.title ?? "Session", messages);
         setPulling(false);
       })
       .catch((err: unknown) => {
-        if (cancelled || generation !== pullGeneration.current) return;
+        if (cancelled || generation !== pullGeneration.current || !profileRun.isCurrent()) return;
         if (isMissing(err)) {
           setPullError("This session no longer exists on Hermes.");
           return;
@@ -155,19 +157,30 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setPullError((err as Error)?.message ?? "Couldn't reach your Mac.");
       })
       .finally(() => {
-        if (!cancelled && generation === pullGeneration.current) setPulling(false);
+        if (!cancelled && generation === pullGeneration.current && profileRun.isCurrent()) {
+          setPulling(false);
+        }
+        profileRun.release();
       });
     return () => {
       cancelled = true;
+      profileRun.abort();
+      profileRun.release();
       pullRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, configured, config.baseUrl, config.token]);
+  }, [
+    sessionId,
+    configured,
+    config.baseUrl,
+    config.token,
+    config.activeProfile,
+    config.profilePathPrefix,
+  ]);
 
   const run = useCallback(
     async (history: HermesMessage[]) => {
-      const controller = new AbortController();
-      abortRef.current = controller;
+      const profileRun = profileRunBoundary.start();
+      abortRef.current = profileRun;
       setStatus("submitted");
       submitGeneration.current += 1;
       const currentGeneration = submitGeneration.current;
@@ -187,10 +200,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       const isCurrentRun = createRunGuard(
         currentGeneration,
         () => submitGeneration.current,
-        controller.signal,
+        profileRun.signal,
       );
+      const isCurrentProfileRun = () => isCurrentRun() && profileRun.isCurrent();
       const push = () => {
-        if (!isCurrentRun()) return;
+        if (!isCurrentProfileRun()) return;
         setStatus("streaming");
         setLive({
           ...assistant,
@@ -271,7 +285,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             }
           });
 
-          controller.signal.addEventListener("abort", () => {
+          profileRun.signal.addEventListener("abort", () => {
             void rpc.interrupt(sessionId).catch(() => undefined);
             const abortError = new Error("Aborted");
             abortError.name = "AbortError";
@@ -300,7 +314,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           message: prompt ? toSessionContent(prompt) : "",
           provider: activeProvider,
           model,
-          signal: controller.signal,
+          signal: profileRun.signal,
           handlers: {
             onText: (delta) => {
               text += delta;
@@ -320,9 +334,9 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       const start = async (model: string) => attempt(model);
       try {
         await start(activeModel);
-        if (!isCurrentRun()) return;
-        const canonical = await pullSession(config, sessionId);
-        if (!isCurrentRun()) return;
+        if (!isCurrentProfileRun()) return;
+        const canonical = await pullSession(config, sessionId, profileRun.signal);
+        if (!isCurrentProfileRun()) return;
         importGatewaySession(
           sessionId,
           session?.title ?? "New chat",
@@ -333,7 +347,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setStatus("idle");
         haptic("done");
       } catch (err) {
-        if (!isCurrentRun()) return;
+        if (!isCurrentProfileRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
         const finished: HermesMessage = {
           ...assistant,
@@ -350,10 +364,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setStatus(aborted ? "idle" : "error");
         if (!aborted) haptic("error");
       } finally {
-        if (currentGeneration === submitGeneration.current) {
+        if (isCurrentProfileRun()) {
           setLive(null);
-          if (abortRef.current === controller) abortRef.current = null;
+          if (abortRef.current === profileRun) abortRef.current = null;
         }
+        profileRun.release();
       }
     },
     [activeModel, activeProvider, config, rpcRef, session?.title, sessionId],

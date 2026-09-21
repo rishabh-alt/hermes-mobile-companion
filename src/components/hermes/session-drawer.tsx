@@ -2,7 +2,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
   Bot,
-  Brain,
   Calendar,
   Check,
   Columns3,
@@ -13,7 +12,6 @@ import {
   PinOff,
   Plus,
   Search,
-  Settings,
   Trash2,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -39,6 +37,7 @@ import {
 import { createGatewaySession } from "@/lib/hermes/session-api";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { cn } from "@/lib/utils";
+import { ProfileSwitcher } from "@/components/hermes/profile-switcher";
 
 interface Props {
   activeId?: string | undefined;
@@ -328,7 +327,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
             {!!remoteVisible.length && (
               <section className="pt-3">
                 <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  On your Mac
+                  Gateway sessions
                 </p>
                 {remoteVisible.map((item) => (
                   <Link
@@ -365,21 +364,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       </div>
 
       <div className="safe-bottom flex items-center gap-1 border-t border-sidebar-border px-3 pt-2">
-        <Link
-          to="/memory"
-          onClick={onNavigate}
-          className="flex flex-1 items-center gap-2 rounded-lg px-2 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent"
-        >
-          <Brain className="h-4 w-4 text-muted-foreground" /> Memory
-        </Link>
-        <Link
-          to="/settings"
-          onClick={onNavigate}
-          aria-label="Settings"
-          className="rounded-lg p-2 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        >
-          <Settings className="h-4 w-4" />
-        </Link>
+        <ProfileSwitcher onNavigate={onNavigate} />
       </div>
     </div>
   );

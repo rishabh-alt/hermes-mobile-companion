@@ -37,7 +37,7 @@ function toHermesMessage(raw: GatewayMessage, index: number): HermesMessage {
 }
 
 /** Pulls a conversation from the Mac into the phone so it can be read and continued. */
-export async function pullSession(config: HermesConfig, id: string) {
-  const raw = await fetchSessionMessages(config, id);
+export async function pullSession(config: HermesConfig, id: string, signal?: AbortSignal) {
+  const raw = await fetchSessionMessages(config, id, 200, signal);
   return raw.map(toHermesMessage);
 }

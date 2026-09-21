@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearSessionCache, importGatewaySession, readSessions } from "./sessions";
+import {
+  activateSessionProfile,
+  clearSessionCache,
+  importGatewaySession,
+  readSessions,
+} from "./sessions";
 
 afterEach(() => {
   clearSessionCache();
+  activateSessionProfile("default");
   vi.unstubAllGlobals();
 });
 
@@ -26,5 +32,24 @@ describe("session cache", () => {
       }),
     ]);
     expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps identical session ids isolated between profiles", () => {
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+    vi.stubGlobal("CustomEvent", class {});
+
+    importGatewaySession("shared-id", "Default chat", [], "default-model", "default-provider");
+    activateSessionProfile("research");
+    expect(readSessions()).toEqual([]);
+
+    importGatewaySession("shared-id", "Research chat", [], "research-model", "research-provider");
+    expect(readSessions()[0]).toMatchObject({ title: "Research chat", model: "research-model" });
+
+    activateSessionProfile("default");
+    expect(readSessions()[0]).toMatchObject({ title: "Default chat", model: "default-model" });
+  });
+
+  it("rejects unsafe profile cache identities", () => {
+    expect(() => activateSessionProfile("../default")).toThrow(/profile/i);
   });
 });

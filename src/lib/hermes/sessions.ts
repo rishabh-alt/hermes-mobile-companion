@@ -1,25 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
 import type { HermesMessage, Session } from "./types";
+import { isSafeProfileName } from "./profiles";
 
 const EVENT = "hermes-sessions-change";
-let cache: Session[] = [];
+const caches = new Map<string, Session[]>();
+let activeProfile = "default";
 
 export function readSessions(): Session[] {
-  return cache;
+  return caches.get(activeProfile) ?? [];
 }
 
 function persist(sessions: Session[]) {
-  cache = sessions;
+  caches.set(activeProfile, sessions);
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(EVENT));
 }
 
+export function activateSessionProfile(profile: string) {
+  if (!isSafeProfileName(profile)) throw new Error("Invalid profile cache identity.");
+  activeProfile = profile;
+  if (!caches.has(profile)) caches.set(profile, []);
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(EVENT));
+}
+
+export function activeSessionProfile() {
+  return activeProfile;
+}
+
 export function mutateSessions(fn: (sessions: Session[]) => Session[]) {
-  persist(fn(cache));
+  persist(fn(readSessions()));
 }
 
 /** Test-only reset for the non-persistent client render cache. */
 export function clearSessionCache() {
-  cache = [];
+  caches.clear();
+  caches.set(activeProfile, []);
 }
 
 /** @deprecated New conversations must be created by createGatewaySession(). */
@@ -28,7 +42,7 @@ export function createSession(): never {
 }
 
 export function ensureSession(id: string, model?: string): Session {
-  const existing = cache.find((session) => session.id === id);
+  const existing = readSessions().find((session) => session.id === id);
   if (existing) return existing;
   const now = Date.now();
   const session: Session = {
@@ -91,6 +105,30 @@ export function useSession(id: string) {
 }
 
 /** Caches a gateway transcript only for live rendering; the gateway remains authoritative. */
+export function seedGatewaySessions(
+  sessions: Array<{
+    id: string;
+    title?: string;
+    model?: string;
+    message_count?: number;
+    updated_at?: string | number;
+    created_at?: string | number;
+    pinned?: boolean;
+  }>,
+) {
+  const now = Date.now();
+  const seeded = sessions.map((remote) => ({
+    id: remote.id,
+    title: remote.title?.trim() || "New chat",
+    pinned: remote.pinned === true,
+    createdAt: remote.created_at ? new Date(remote.created_at).getTime() || now : now,
+    updatedAt: remote.updated_at ? new Date(remote.updated_at).getTime() || now : now,
+    model: remote.model,
+    messages: [],
+  }));
+  mutateSessions(() => seeded);
+}
+
 export function importGatewaySession(
   id: string,
   title: string,

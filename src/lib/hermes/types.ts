@@ -50,6 +50,8 @@ export type ReasoningLevel = "off" | "low" | "medium" | "high";
 export interface HermesConfig {
   baseUrl: string;
   token: string;
+  activeProfile: string;
+  profilePathPrefix: string;
   provider: string;
   model: string;
   fallbackModel: string;

@@ -1,5 +1,5 @@
 import type { HermesConfig } from "./types";
-import { parseSecureBaseUrl } from "./client";
+import { composeGatewayUrl } from "./profiles";
 
 /**
  * JSON-RPC client for the Hermes gateway WebSocket — the same transport the
@@ -61,11 +61,14 @@ export class HermesRpc {
   }
 
   url() {
-    const base = parseSecureBaseUrl(this.config.baseUrl);
-    if (!base) return "";
-    const ws = base.replace(/^http/, "ws");
+    let ws: string;
+    try {
+      ws = composeGatewayUrl(this.config, "/ws").replace(/^http/, "ws");
+    } catch {
+      return "";
+    }
     const token = this.config.token.trim();
-    return `${ws}/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    return `${ws}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   }
 
   connect() {

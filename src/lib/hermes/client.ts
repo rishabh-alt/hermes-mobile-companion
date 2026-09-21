@@ -8,6 +8,7 @@ import type {
   ToolCall,
 } from "./types";
 import { createClientId } from "./ids";
+import { composeGatewayUrl } from "./profiles";
 
 export class HermesError extends Error {
   status?: number | undefined;
@@ -61,10 +62,10 @@ function headers(config: HermesConfig, json = true): Record<string, string> {
 }
 
 async function request<T>(config: HermesConfig, path: string, init?: RequestInit): Promise<T> {
-  const base = requireSecureBaseUrl(config.baseUrl);
+  const url = composeGatewayUrl(config, path);
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, {
+    res = await fetch(url, {
       ...init,
       headers: { ...headers(config), ...(init?.headers ?? {}) },
     });
@@ -208,7 +209,7 @@ export async function streamChat({
   signal,
   handlers,
 }: StreamArgs) {
-  const base = requireSecureBaseUrl(config.baseUrl);
+  const url = composeGatewayUrl(config, "/v1/chat/completions");
 
   const body = {
     ...(provider ? { provider } : {}),
@@ -219,7 +220,7 @@ export async function streamChat({
 
   let res: Response;
   try {
-    res = await fetch(`${base}/v1/chat/completions`, {
+    res = await fetch(url, {
       method: "POST",
       headers: headers(config),
       body: JSON.stringify(body),

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { parseSecureBaseUrl } from "./client";
+import { composeGatewayUrl } from "./profiles";
 import { createClientId } from "./ids";
 import type { HermesConfig } from "./types";
 
@@ -13,9 +13,12 @@ export interface AgentEvent {
 }
 
 function socketUrl(config: HermesConfig) {
-  const base = parseSecureBaseUrl(config.baseUrl);
-  if (!base) return null;
-  const url = base.replace(/^http/, "ws") + "/ws";
+  let url: string;
+  try {
+    url = composeGatewayUrl(config, "/ws").replace(/^http/, "ws");
+  } catch {
+    return null;
+  }
   const token = config.token.trim();
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }

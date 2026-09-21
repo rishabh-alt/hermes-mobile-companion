@@ -1,6 +1,7 @@
-import { HermesError, requireSecureBaseUrl } from "./client";
+import { HermesError } from "./client";
 import { api, type SessionInfo } from "./rest";
 import type { HermesConfig } from "./types";
+import { composeGatewayUrl } from "./profiles";
 
 function sessionFrom(data: unknown): SessionInfo {
   const payload = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
@@ -94,10 +95,13 @@ export async function streamGatewaySession({
   signal: AbortSignal;
   handlers: SessionStreamHandlers;
 }) {
-  const base = requireSecureBaseUrl(config.baseUrl);
+  const url = composeGatewayUrl(
+    config,
+    `/api/sessions/${encodeURIComponent(sessionId)}/chat/stream`,
+  );
   let response: Response;
   try {
-    response = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/chat/stream`, {
+    response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
