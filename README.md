@@ -76,6 +76,4 @@ it immediately rather than merely deleting the file from the latest commit.
 
 ## License
 
-A license will be selected before the first public release. Until then, the
-repository is public for collaboration and review, not a promise that every
-use or redistribution right has been granted.
+MIT 
