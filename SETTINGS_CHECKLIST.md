@@ -6,12 +6,13 @@ The phone is the console. Hermes stays on the headless host. This checklist is t
 
 Do not copy the desktop renderer. Build these as mobile accordion sections. Every mutation reads the host, writes through a supported contract, then reads the value back. If the host does not expose a control, show that. Do not invent a phone-only fake.
 
-Current app settings cover only connection, token, fallback model, live channel, and haptics. Everything below is still to build unless marked done.
+Current app settings cover connection, token, fallback model, live channel, haptics, search, and a one-at-a-time section list. Check host probes health, models, sessions, a transcript, and capabilities. Host writes stay blocked while the gateway advertises `admin_config_rw: false`.
 
 ## Phone shell
 
-- [ ] One Settings gear. One section open at a time. Deep editors open their own screen.
-- [ ] Search across setting names.
+- [x] One Settings gear. One section open at a time.
+- [ ] Deep editors open their own screen.
+- [x] Search across setting names.
 - [ ] Export config, import config, and reset to defaults, with confirmation on destructive actions.
 - [ ] Secret values use the host vault or Android Keystore. Never show, log, or store them in WebView storage.
 - [ ] Profile switching stays in the session drawer, not as a second settings home.
@@ -114,7 +115,7 @@ A killed app cannot receive true push yet. Say that. Do not pretend a local noti
 
 The phone's own connection screen stays separate from host administration.
 
-- [ ] Phone connection: HTTPS URL, token test, models, sessions, transcript, and stream. Partly done.
+- [x] Phone connection: HTTPS URL, token test, models, sessions, transcript, and stream. Partly done.
 - [ ] Host bind, port, and reachability.
 - [ ] Paired devices: list and revoke.
 - [ ] Host secret-storage mode. Do not copy the desktop keychain toggle blindly.

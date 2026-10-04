@@ -1,127 +1,300 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AppShell } from "@/components/hermes/app-shell";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { testConnection } from "@/lib/hermes/client";
+import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
+import { composeGatewayUrl } from "@/lib/hermes/profiles";
+import {
+  DIAGNOSTIC_PROBES,
+  firstSessionMessagesPath,
+  interpretProbe,
+  searchSections,
+  settingsSections,
+  type ProbeStatus,
+  type SettingsSection,
+} from "@/lib/hermes/settings-console";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
       { title: "Settings · Hermes companion" },
-      {
-        name: "description",
-        content: "Connect this app to the Hermes gateway running on your Mac.",
-      },
-      { property: "og:title", content: "Settings · Hermes companion" },
-      {
-        property: "og:description",
-        content: "Connect this app to the Hermes gateway running on your Mac.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
+      { name: "description", content: "Phone console for a headless Hermes host." },
     ],
   }),
   component: SettingsRoute,
 });
 
+type ProbeRow = { id: string; label: string; status: ProbeStatus; detail?: string };
+
 function SettingsRoute() {
   const { config, update } = useHermesConfig();
-  const [result, setResult] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
+  const [query, setQuery] = useState("");
+  const [features, setFeatures] = useState<{ admin_config_rw?: boolean; model_options?: boolean }>(
+    {},
+  );
+  const [probes, setProbes] = useState<ProbeRow[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelNote, setModelNote] = useState<string | null>(null);
+  const sections = useMemo(
+    () => searchSections(settingsSections(features), query),
+    [features, query],
+  );
 
-  const test = async () => {
-    setTesting(true);
-    setResult(null);
+  const checkHost = async () => {
+    setChecking(true);
+    setProbes([]);
     try {
-      const models = await testConnection(config);
-      if (!config.model && models[0]?.id) update({ model: models[0].id });
-      haptic("done");
-      setResult(
-        models[0]?.id
-          ? `Connected — using ${models[0].id}. ${models.length} models available.`
-          : `Connected — ${models.length} models available.`,
+      const rows = await Promise.all(
+        DIAGNOSTIC_PROBES.map((probe) => runProbe(config, probe.id, probe.label, probe.path)),
       );
-    } catch (err) {
-      haptic("error");
-      setResult((err as Error).message);
+      const sessions = rows.find((row) => row.id === "sessions");
+      if (sessions?.status === "ok") {
+        const path = firstSessionMessagesPath(sessions.payload);
+        rows.push(
+          path
+            ? await runProbe(config, "transcript", "Transcript", path)
+            : { id: "transcript", label: "Transcript", status: "ok", detail: "No sessions yet." },
+        );
+      }
+      const capabilities = rows.find((row) => row.id === "capabilities");
+      const raw =
+        capabilities?.payload && typeof capabilities.payload === "object"
+          ? ((capabilities.payload as { features?: Record<string, unknown> }).features ?? {})
+          : {};
+      setFeatures({
+        admin_config_rw: raw["admin_config_rw"] === true,
+        model_options: raw["model_options"] === true,
+      });
+      if (raw["model_options"] === true && !config.model) {
+        try {
+          const list = await fetchModels(config);
+          if (list[0]?.id) update({ model: list[0].id });
+        } catch {
+          // Model inventory is reported by its own probe.
+        }
+      }
+      setProbes(rows.map(({ payload: _payload, ...row }) => row));
+      haptic(
+        rows.some((row) => row.status === "auth" || row.status === "transport") ? "error" : "done",
+      );
     } finally {
-      setTesting(false);
+      setChecking(false);
+    }
+  };
+
+  const loadModels = async () => {
+    setModelNote(null);
+    try {
+      const list = await fetchModels(config);
+      setModels(list.map((model) => model.id));
+      setModelNote(
+        list.length ? `${list.length} models on the host.` : "The host returned no models.",
+      );
+      if (!config.model && list[0]?.id) update({ model: list[0].id });
+    } catch (err) {
+      setModels([]);
+      setModelNote(err instanceof HermesError ? err.message : "Could not read models.");
     }
   };
 
   return (
-    <AppShell title="Settings" subtitle="Connection to your Mac">
-      <div className="mx-auto w-full max-w-xl space-y-6 overflow-y-auto p-4 pb-16">
-        <div className="space-y-2">
-          <Label htmlFor="baseUrl">Gateway address</Label>
-          <Input
-            id="baseUrl"
-            inputMode="url"
-            autoCapitalize="none"
-            placeholder="https://your-mac.example.ts.net"
-            value={config.baseUrl}
-            onChange={(e) => update({ baseUrl: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">
-            HTTPS Tailscale Serve or tunnel URL. Plain HTTP is rejected to protect your token.
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="token">Access token</Label>
-          <Input
-            id="token"
-            type="password"
-            autoCapitalize="none"
-            placeholder="optional"
-            value={config.token}
-            onChange={(e) => update({ token: e.target.value })}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="fallback">Fallback model</Label>
-          <Input
-            id="fallback"
-            autoCapitalize="none"
-            placeholder="used if the main model fails"
-            value={config.fallbackModel}
-            onChange={(e) => update({ fallbackModel: e.target.value })}
-          />
-        </div>
-
-        <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
-          <div>
-            <p className="text-sm font-medium">Live agent channel</p>
-            <p className="text-xs text-muted-foreground">
-              Show thoughts and tool activity in realtime.
-            </p>
-          </div>
-          <Switch checked={config.wsEnabled} onCheckedChange={(v) => update({ wsEnabled: v })} />
-        </div>
-
-        <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
-          <div>
-            <p className="text-sm font-medium">Haptics</p>
-            <p className="text-xs text-muted-foreground">Vibrate on send, finish and errors.</p>
-          </div>
-          <Switch checked={config.haptics} onCheckedChange={(v) => update({ haptics: v })} />
-        </div>
-
-        <Button onClick={test} disabled={testing || !config.baseUrl.trim()} className="w-full">
-          {testing ? "Testing…" : "Test connection"}
-        </Button>
-        {result && <p className="text-sm text-muted-foreground">{result}</p>}
-
-        <Button asChild variant="outline" className="w-full">
-          <Link to="/status">Connection &amp; usage</Link>
-        </Button>
+    <AppShell title="Settings" subtitle="Headless host console">
+      <div className="mx-auto w-full max-w-xl space-y-4 overflow-y-auto p-4 pb-16">
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search settings"
+          aria-label="Search settings"
+        />
+        <Accordion type="single" collapsible className="rounded-xl border border-border/70 px-3">
+          {sections.map((section) => (
+            <AccordionItem key={section.id} value={section.id}>
+              <AccordionTrigger>
+                <span className="flex min-w-0 flex-col items-start">
+                  <span>{section.title}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {accessLabel(section)}
+                  </span>
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">{section.summary}</p>
+                {section.id === "connection" && (
+                  <ConnectionFields
+                    config={config}
+                    update={update}
+                    checking={checking}
+                    probes={probes}
+                    onCheck={checkHost}
+                  />
+                )}
+                {section.id === "appearance" && (
+                  <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+                    <div>
+                      <p className="text-sm font-medium">Haptics</p>
+                      <p className="text-xs text-muted-foreground">
+                        Vibrate on send, finish, and errors.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={config.haptics}
+                      onCheckedChange={(value) => update({ haptics: value })}
+                    />
+                  </div>
+                )}
+                {section.id === "model" && section.access === "read" && (
+                  <div className="space-y-2">
+                    <Button type="button" variant="outline" onClick={loadModels}>
+                      Read host models
+                    </Button>
+                    {modelNote && <p className="text-xs text-muted-foreground">{modelNote}</p>}
+                    {models.length > 0 && (
+                      <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                        {models.map((id) => (
+                          <li key={id}>{id}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                {section.reason && (
+                  <p className="text-sm text-muted-foreground">{section.reason}</p>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+        {sections.length === 0 && (
+          <p className="text-sm text-muted-foreground">No settings match that search.</p>
+        )}
       </div>
     </AppShell>
   );
+}
+
+function ConnectionFields({
+  config,
+  update,
+  checking,
+  probes,
+  onCheck,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+  update: ReturnType<typeof useHermesConfig>["update"];
+  checking: boolean;
+  probes: ProbeRow[];
+  onCheck: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label htmlFor="baseUrl">Gateway address</Label>
+        <Input
+          id="baseUrl"
+          inputMode="url"
+          autoCapitalize="none"
+          placeholder="https://your-mac.example.ts.net"
+          value={config.baseUrl}
+          onChange={(event) => update({ baseUrl: event.target.value })}
+        />
+        <p className="text-xs text-muted-foreground">
+          HTTPS Tailscale Serve or tunnel URL. Plain HTTP is rejected to protect your token.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="token">Access token</Label>
+        <Input
+          id="token"
+          type="password"
+          autoCapitalize="none"
+          value={config.token}
+          onChange={(event) => update({ token: event.target.value })}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="fallback">Fallback model</Label>
+        <Input
+          id="fallback"
+          autoCapitalize="none"
+          placeholder="used if the main model fails"
+          value={config.fallbackModel}
+          onChange={(event) => update({ fallbackModel: event.target.value })}
+        />
+      </div>
+      <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+        <div>
+          <p className="text-sm font-medium">Live agent channel</p>
+          <p className="text-xs text-muted-foreground">Show thoughts and tool activity.</p>
+        </div>
+        <Switch
+          checked={config.wsEnabled}
+          onCheckedChange={(value) => update({ wsEnabled: value })}
+        />
+      </div>
+      <Button
+        type="button"
+        onClick={onCheck}
+        disabled={checking || !config.baseUrl.trim()}
+        className="w-full"
+      >
+        {checking ? "Checking…" : "Check host"}
+      </Button>
+      {probes.length > 0 && (
+        <ul className="space-y-1 text-xs">
+          {probes.map((probe) => (
+            <li key={probe.id}>
+              {probe.label}: {probe.status}
+              {probe.detail ? ` — ${probe.detail}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      <Button asChild variant="outline" className="w-full">
+        <Link to="/status">Connection &amp; usage</Link>
+      </Button>
+    </div>
+  );
+}
+
+async function runProbe(
+  config: ReturnType<typeof useHermesConfig>["config"],
+  id: string,
+  label: string,
+  path: string,
+): Promise<ProbeRow & { payload?: unknown }> {
+  try {
+    const headers: Record<string, string> = {};
+    if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
+    const response = await fetch(composeGatewayUrl(config, path), { headers });
+    const status = interpretProbe({ ok: response.ok, status: response.status });
+    let payload: unknown;
+    if (response.ok) {
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+    }
+    return { id, label, status, payload };
+  } catch {
+    return { id, label, status: interpretProbe({ ok: false, transport: true }) };
+  }
+}
+
+function accessLabel(section: SettingsSection) {
+  if (section.access === "phone") return "On this phone";
+  if (section.access === "read") return "Read from host";
+  return "Host has not opened this";
 }
