@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
+import { readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -40,9 +41,11 @@ type ProbeRow = { id: string; label: string; status: ProbeStatus; detail?: strin
 function SettingsRoute() {
   const { config, update } = useHermesConfig();
   const [query, setQuery] = useState("");
-  const [features, setFeatures] = useState<{ admin_config_rw?: boolean; model_options?: boolean }>(
-    {},
-  );
+  const [features, setFeatures] = useState<{
+    admin_config_rw?: boolean;
+    model_options?: boolean;
+    model_admin?: boolean;
+  }>({});
   const [probes, setProbes] = useState<ProbeRow[]>([]);
   const [checking, setChecking] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -76,6 +79,7 @@ function SettingsRoute() {
       setFeatures({
         admin_config_rw: raw["admin_config_rw"] === true,
         model_options: raw["model_options"] === true,
+        model_admin: raw["model_admin"] === true,
       });
       if (raw["model_options"] === true && !config.model) {
         try {
@@ -168,6 +172,9 @@ function SettingsRoute() {
                       </ul>
                     )}
                   </div>
+                )}
+                {section.id === "model" && section.access === "write" && (
+                  <ModelAdminPanel config={config} update={update} />
                 )}
                 {section.reason && (
                   <p className="text-sm text-muted-foreground">{section.reason}</p>
@@ -295,6 +302,92 @@ async function runProbe(
 
 function accessLabel(section: SettingsSection) {
   if (section.access === "phone") return "On this phone";
+  if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
   return "Host has not opened this";
+}
+
+function ModelAdminPanel({
+  config,
+  update,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+  update: ReturnType<typeof useHermesConfig>["update"];
+}) {
+  const [model, setModel] = useState(config.model);
+  const [provider, setProvider] = useState(config.provider);
+  const [reasoning, setReasoning] = useState(config.reasoning as string);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async (action: "read" | "save") => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const saved =
+        action === "read"
+          ? await readHostModel(config)
+          : await saveHostModel(config, { model, provider, reasoning_effort: reasoning });
+      setModel(saved.model);
+      setProvider(saved.provider);
+      setReasoning(saved.reasoning_effort || reasoning);
+      update({ model: saved.model, provider: saved.provider });
+      setNote(
+        action === "read" ? "Read back from the host." : "Saved and read back from the host.",
+      );
+      haptic("done");
+    } catch (err) {
+      haptic("error");
+      setNote(err instanceof HermesError ? err.message : "The host refused that change.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label htmlFor="adminToken">Model admin key</Label>
+        <Input
+          id="adminToken"
+          type="password"
+          autoCapitalize="none"
+          value={config.adminToken}
+          onChange={(event) => update({ adminToken: event.target.value })}
+        />
+        <p className="text-xs text-muted-foreground">
+          Separate from the chat token. Stored in the phone keystore.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="hostModel">Host model</Label>
+        <Input id="hostModel" value={model} onChange={(event) => setModel(event.target.value)} />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="hostProvider">Provider</Label>
+        <Input
+          id="hostProvider"
+          value={provider}
+          onChange={(event) => setProvider(event.target.value)}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="hostReasoning">Reasoning</Label>
+        <Input
+          id="hostReasoning"
+          value={reasoning}
+          onChange={(event) => setReasoning(event.target.value)}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" variant="outline" disabled={busy} onClick={() => run("read")}>
+          Read
+        </Button>
+        <Button type="button" disabled={busy} onClick={() => run("save")}>
+          Save
+        </Button>
+      </div>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+    </div>
+  );
 }

@@ -4,6 +4,7 @@ import { fetchModelOptions } from "./rest";
 const config = {
   baseUrl: "https://example.com",
   token: "private-token",
+  adminToken: "",
   activeProfile: "default",
   profilePathPrefix: "",
   provider: "",

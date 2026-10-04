@@ -1,4 +1,4 @@
-export type SectionAccess = "phone" | "read" | "blocked";
+export type SectionAccess = "phone" | "read" | "write" | "blocked";
 
 export type SettingsSection = {
   id: string;
@@ -122,14 +122,22 @@ const BLOCKED = "This gateway does not advertise config changes.";
 export function settingsSections(features: {
   admin_config_rw?: boolean;
   model_options?: boolean;
+  model_admin?: boolean;
 }): SettingsSection[] {
   return CATALOG.map((section) => {
     if (section.kind === "phone") return { ...section, access: "phone" };
+    if (section.kind === "model" && features.model_admin) {
+      return {
+        ...section,
+        access: "write",
+        reason: "Saves through the separate model admin key, not the chat token.",
+      };
+    }
     if (section.kind === "model" && features.model_options) {
       return {
         ...section,
         access: "read",
-        reason: "The model list can be read. Saving the host default needs config admin.",
+        reason: "The model list can be read. Saving the host default needs the model admin door.",
       };
     }
     return { ...section, access: "blocked", reason: BLOCKED };

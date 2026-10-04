@@ -14,6 +14,17 @@ describe("settingsSections", () => {
     expect(sections.find((section) => section.id === "safety")?.reason).toMatch(/config/i);
   });
 
+  it("opens model saves only through the separate admin door", () => {
+    const model = settingsSections({ model_admin: true, admin_config_rw: false }).find(
+      (section) => section.id === "model",
+    );
+    expect(model?.access).toBe("write");
+    expect(
+      settingsSections({ admin_config_rw: true }).find((section) => section.id === "safety")
+        ?.access,
+    ).toBe("blocked");
+  });
+
   it("lets model be read from the advertised inventory without pretending the host default can be saved", () => {
     const model = settingsSections({ admin_config_rw: false, model_options: true }).find(
       (section) => section.id === "model",

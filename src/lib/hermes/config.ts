@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import type { HermesConfig } from "./types";
 import { isSecureBaseUrl } from "./client";
-import { getSecureToken, setSecureToken } from "./secure-storage";
+import {
+  getSecureToken,
+  setSecureToken,
+  getSecureAdminKey,
+  setSecureAdminKey,
+} from "./secure-storage";
 import { validateProfilePathPrefix } from "./profiles";
 import { activateSessionProfile } from "./sessions";
 import { profileRunBoundary } from "./run-guard";
 
 const KEY = "hermes.config.v1";
 let runtimeToken = "";
+let runtimeAdminToken = "";
 let tokenWriteQueue = Promise.resolve();
 
 export const defaultConfig: HermesConfig = {
   baseUrl: "",
   token: "",
+  adminToken: "",
   activeProfile: "default",
   profilePathPrefix: "",
   provider: "",
@@ -34,12 +41,17 @@ function readStoredConfig(): Partial<HermesConfig> {
 }
 
 function persistPublicConfig(config: HermesConfig) {
-  const { token: _token, ...publicConfig } = config;
+  const { token: _token, adminToken: _adminToken, ...publicConfig } = config;
   window.localStorage.setItem(KEY, JSON.stringify(publicConfig));
 }
 
 export function readConfig(): HermesConfig {
-  return { ...defaultConfig, ...readStoredConfig(), token: runtimeToken };
+  return {
+    ...defaultConfig,
+    ...readStoredConfig(),
+    token: runtimeToken,
+    adminToken: runtimeAdminToken,
+  };
 }
 
 export async function loadConfig(): Promise<HermesConfig> {
@@ -48,10 +60,16 @@ export async function loadConfig(): Promise<HermesConfig> {
   try {
     runtimeToken = (await getSecureToken()) || legacyToken;
     if (legacyToken && runtimeToken === legacyToken) await setSecureToken(legacyToken);
+    runtimeAdminToken = await getSecureAdminKey();
   } catch {
     runtimeToken = legacyToken;
   }
-  const config = { ...defaultConfig, ...stored, token: runtimeToken };
+  const config = {
+    ...defaultConfig,
+    ...stored,
+    token: runtimeToken,
+    adminToken: runtimeAdminToken,
+  };
   validateProfilePathPrefix(
     config.activeProfile,
     config.profilePathPrefix,
@@ -75,10 +93,14 @@ export function writeConfig(config: HermesConfig) {
   );
   const previousProfile = readConfig().activeProfile;
   runtimeToken = config.token;
+  runtimeAdminToken = config.adminToken;
   persistPublicConfig(config);
   if (previousProfile !== config.activeProfile) profileRunBoundary.invalidate();
   activateSessionProfile(config.activeProfile);
-  tokenWriteQueue = tokenWriteQueue.then(() => setSecureToken(runtimeToken)).catch(() => undefined);
+  tokenWriteQueue = tokenWriteQueue
+    .then(() => setSecureToken(runtimeToken))
+    .then(() => setSecureAdminKey(runtimeAdminToken))
+    .catch(() => undefined);
   window.dispatchEvent(new CustomEvent("hermes-config-change"));
 }
 
