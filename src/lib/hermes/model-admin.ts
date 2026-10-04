@@ -10,6 +10,37 @@ export type HostModelSettings = {
   fallback_providers: Array<{ provider: string; model: string }>;
 };
 
+export async function claimHostAdmin(config: HermesConfig): Promise<string> {
+  const token = config.token.trim();
+  if (!token) throw new HermesError("Save the gateway token in Settings first.");
+  requireSecureBaseUrl(config.baseUrl);
+  let response: Response;
+  try {
+    response = await fetch(composeGatewayUrl(config, "/api/admin/model/claim", { root: true }), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new HermesError("Can't reach the gateway. Check the URL, the tunnel, or your VPN.");
+  }
+  if (response.status === 409) {
+    throw new HermesError("This host is already set up on a phone.", response.status);
+  }
+  if (response.status === 404) {
+    throw new HermesError(
+      "Restart the gateway once, then tap Set up this phone again.",
+      response.status,
+    );
+  }
+  if (!response.ok)
+    throw new HermesError("The gateway could not set up this phone.", response.status);
+  const data = (await response.json()) as { admin_key?: unknown };
+  if (typeof data.admin_key !== "string" || !data.admin_key.trim()) {
+    throw new HermesError("The gateway did not return a setup key.");
+  }
+  return data.admin_key;
+}
+
 export async function readHostModel(config: HermesConfig): Promise<HostModelSettings> {
   return adminRequest(config, "GET");
 }

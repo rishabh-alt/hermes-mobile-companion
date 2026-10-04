@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { saveHostModel } from "./model-admin";
+import { claimHostAdmin, saveHostModel } from "./model-admin";
 import type { HermesConfig } from "./types";
 
 const config = {
@@ -19,6 +19,22 @@ const config = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("claimHostAdmin", () => {
+  it("uses the chat token once and returns a key for the app to store", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ admin_key: "admin-key-0123456789" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(claimHostAdmin(config)).resolves.toBe("admin-key-0123456789");
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer chat-token");
+  });
 });
 
 describe("saveHostModel", () => {

@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
-import { readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
+import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -173,9 +173,7 @@ function SettingsRoute() {
                     )}
                   </div>
                 )}
-                {section.id === "model" && section.access === "write" && (
-                  <ModelAdminPanel config={config} update={update} />
-                )}
+                {section.id === "model" && <ModelAdminPanel config={config} update={update} />}
                 {section.reason && (
                   <p className="text-sm text-muted-foreground">{section.reason}</p>
                 )}
@@ -319,11 +317,18 @@ function ModelAdminPanel({
   const [reasoning, setReasoning] = useState(config.reasoning as string);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const ready = Boolean(config.adminToken.trim());
 
-  const run = async (action: "read" | "save") => {
+  const run = async (action: "claim" | "read" | "save") => {
     setBusy(true);
     setNote(null);
     try {
+      if (action === "claim") {
+        update({ adminToken: await claimHostAdmin(config) });
+        setNote("This phone is set up. You can change the host model here.");
+        haptic("done");
+        return;
+      }
       const saved =
         action === "read"
           ? await readHostModel(config)
@@ -346,19 +351,15 @@ function ModelAdminPanel({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <Label htmlFor="adminToken">Model admin key</Label>
-        <Input
-          id="adminToken"
-          type="password"
-          autoCapitalize="none"
-          value={config.adminToken}
-          onChange={(event) => update({ adminToken: event.target.value })}
-        />
-        <p className="text-xs text-muted-foreground">
-          Separate from the chat token. Stored in the phone keystore.
+      {ready ? (
+        <p className="text-sm text-muted-foreground">
+          This phone is set up. The key stays on the phone.
         </p>
-      </div>
+      ) : (
+        <Button type="button" disabled={busy} onClick={() => run("claim")}>
+          Set up this phone
+        </Button>
+      )}
       <div className="space-y-2">
         <Label htmlFor="hostModel">Host model</Label>
         <Input id="hostModel" value={model} onChange={(event) => setModel(event.target.value)} />
@@ -380,10 +381,15 @@ function ModelAdminPanel({
         />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Button type="button" variant="outline" disabled={busy} onClick={() => run("read")}>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy || !ready}
+          onClick={() => run("read")}
+        >
           Read
         </Button>
-        <Button type="button" disabled={busy} onClick={() => run("save")}>
+        <Button type="button" disabled={busy || !ready} onClick={() => run("save")}>
           Save
         </Button>
       </div>
