@@ -2,7 +2,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
   Bot,
-  Brain,
   Calendar,
   Check,
   Columns3,
@@ -13,7 +12,6 @@ import {
   PinOff,
   Plus,
   Search,
-  Settings,
   Trash2,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -21,16 +19,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { haptic } from "@/lib/hermes/haptics";
 import {
-  createSession,
   deleteSession,
   groupSessions,
+  importGatewaySession,
   updateSession,
   useSessions,
 } from "@/lib/hermes/sessions";
 import type { Session } from "@/lib/hermes/types";
 import { useGateway } from "@/lib/hermes/useGateway";
-import { listProfiles, listSessions } from "@/lib/hermes/rest";
+import { pullSession } from "@/lib/hermes/session-sync";
+import {
+  deleteSession as deleteGatewaySession,
+  listProfiles,
+  listSessions,
+  renameSession as renameGatewaySession,
+} from "@/lib/hermes/rest";
+import { createGatewaySession } from "@/lib/hermes/session-api";
+import { useHermesConfig } from "@/lib/hermes/config";
 import { cn } from "@/lib/utils";
+import { ProfileSwitcher } from "@/components/hermes/profile-switcher";
 
 interface Props {
   activeId?: string | undefined;
@@ -46,6 +53,7 @@ const MENU = [
 ] as const;
 
 export function SessionDrawer({ activeId, onNavigate }: Props) {
+  const { config, configured } = useHermesConfig();
   const { sessions } = useSessions();
   const remote = useGateway((c) => listSessions(c, 40), []);
   const profiles = useGateway(listProfiles, ["drawer-profiles"]);
@@ -53,6 +61,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const filtered = useMemo(() => {
@@ -70,11 +79,17 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
     .filter((s) => !q || (s.title ?? "").toLowerCase().includes(q))
     .slice(0, 30);
 
-  const startNew = () => {
+  const startNew = async () => {
+    if (!configured) {
+      void navigate({ to: "/settings" });
+      return;
+    }
     haptic("tap");
-    const session = createSession();
+    const session = await createGatewaySession(config);
+    const serverSession = await pullSession(config, session.id);
+    importGatewaySession(session.id, session.title ?? "New chat", serverSession, session.model);
     onNavigate?.();
-    navigate({ to: "/c/$sessionId", params: { sessionId: session.id } });
+    void navigate({ to: "/c/$sessionId", params: { sessionId: session.id } });
   };
 
   const row = (session: Session) => {
@@ -90,9 +105,23 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
         {isRenaming ? (
           <form
             className="flex flex-1 items-center gap-1 py-1"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              updateSession(session.id, { title: draft.trim() || session.title });
+              const nextTitle = draft.trim() || session.title;
+              if (nextTitle !== session.title) {
+                try {
+                  setMutationError(null);
+                  await renameGatewaySession(config, session.id, nextTitle);
+                  const refreshed = await listSessions(config, 60);
+                  const authoritative = refreshed.find((item) => item.id === session.id);
+                  if (!authoritative) throw new Error("Hermes did not return the renamed session.");
+                  updateSession(session.id, { title: authoritative.title ?? nextTitle });
+                  remote.refresh();
+                } catch (err) {
+                  setMutationError((err as Error)?.message ?? "Couldn't rename this session.");
+                  return;
+                }
+              }
               setRenaming(null);
             }}
           >
@@ -159,10 +188,21 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 size="icon-sm"
                 variant="ghost"
                 aria-label="Delete chat"
-                onClick={() => {
+                onClick={async () => {
                   haptic("error");
-                  deleteSession(session.id);
-                  if (session.id === activeId) navigate({ to: "/" });
+                  try {
+                    setMutationError(null);
+                    await deleteGatewaySession(config, session.id);
+                    const refreshed = await listSessions(config, 60);
+                    if (refreshed.some((item) => item.id === session.id)) {
+                      throw new Error("Hermes did not confirm deletion of this session.");
+                    }
+                    deleteSession(session.id);
+                    remote.refresh();
+                    if (session.id === activeId) navigate({ to: "/" });
+                  } catch (err) {
+                    setMutationError((err as Error)?.message ?? "Couldn't delete this session.");
+                  }
                 }}
               >
                 <Trash2 />
@@ -198,6 +238,14 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+        {mutationError && (
+          <p
+            role="alert"
+            className="mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {mutationError}
+          </p>
+        )}
         {tab === "bots" ? (
           <div className="px-1 py-2 text-sm">
             <Link
@@ -279,7 +327,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
             {!!remoteVisible.length && (
               <section className="pt-3">
                 <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  On your Mac
+                  Gateway sessions
                 </p>
                 {remoteVisible.map((item) => (
                   <Link
@@ -316,21 +364,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       </div>
 
       <div className="safe-bottom flex items-center gap-1 border-t border-sidebar-border px-3 pt-2">
-        <Link
-          to="/memory"
-          onClick={onNavigate}
-          className="flex flex-1 items-center gap-2 rounded-lg px-2 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent"
-        >
-          <Brain className="h-4 w-4 text-muted-foreground" /> Memory
-        </Link>
-        <Link
-          to="/settings"
-          onClick={onNavigate}
-          aria-label="Settings"
-          className="rounded-lg p-2 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        >
-          <Settings className="h-4 w-4" />
-        </Link>
+        <ProfileSwitcher onNavigate={onNavigate} />
       </div>
     </div>
   );

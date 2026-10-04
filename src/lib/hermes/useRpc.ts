@@ -10,7 +10,7 @@ export function useHermesRpc(config: HermesConfig, enabled: boolean) {
   const ref = useRef<HermesRpc | null>(null);
   const [state, setState] = useState<RpcState>("idle");
 
-  const key = `${config.baseUrl}|${config.token}|${enabled ? "on" : "off"}`;
+  const key = `${config.baseUrl}|${config.token}|${config.activeProfile}|${config.profilePathPrefix}|${enabled ? "on" : "off"}`;
 
   useEffect(() => {
     if (!enabled || !config.baseUrl.trim()) {

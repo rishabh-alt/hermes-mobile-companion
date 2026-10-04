@@ -3,27 +3,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const secure = vi.hoisted(() => ({
   get: vi.fn<() => Promise<string>>(),
   set: vi.fn<(value: string) => Promise<void>>(),
+  getAdmin: vi.fn<() => Promise<string>>(),
+  setAdmin: vi.fn<(value: string) => Promise<void>>(),
 }));
 
 vi.mock("./secure-storage", () => ({
   getSecureToken: secure.get,
   setSecureToken: secure.set,
+  getSecureAdminKey: secure.getAdmin,
+  setSecureAdminKey: secure.setAdmin,
 }));
 
 import { defaultConfig, loadConfig, writeConfig } from "./config";
+import { activeSessionProfile, activateSessionProfile } from "./sessions";
 
 const values = new Map<string, string>();
 
 beforeEach(() => {
+  activateSessionProfile("default");
   values.clear();
   secure.get.mockReset().mockResolvedValue("");
   secure.set.mockReset().mockResolvedValue();
+  secure.getAdmin.mockReset().mockResolvedValue("");
+  secure.setAdmin.mockReset().mockResolvedValue();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       localStorage: {
         getItem: (key: string) => values.get(key) ?? null,
         setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
       },
       dispatchEvent: vi.fn(),
     },
@@ -38,10 +47,17 @@ beforeEach(() => {
 
 describe("gateway token persistence", () => {
   it("never writes the token to WebView localStorage", () => {
-    writeConfig({ ...defaultConfig, baseUrl: "https://example.com", token: "private-token" });
+    writeConfig({
+      ...defaultConfig,
+      baseUrl: "https://example.com",
+      token: "private-token",
+      adminToken: "admin-secret",
+    });
     const persisted = values.get("hermes.config.v1") ?? "";
     expect(persisted).not.toContain("private-token");
+    expect(persisted).not.toContain("admin-secret");
     expect(JSON.parse(persisted)).not.toHaveProperty("token");
+    expect(JSON.parse(persisted)).not.toHaveProperty("adminToken");
   });
 
   it("migrates a legacy plaintext token to secure storage and removes it", async () => {
@@ -55,5 +71,32 @@ describe("gateway token persistence", () => {
     expect(loaded.token).toBe("legacy-token");
     expect(secure.set).toHaveBeenCalledWith("legacy-token");
     expect(JSON.parse(values.get("hermes.config.v1") ?? "{}")).not.toHaveProperty("token");
+  });
+
+  it("purges legacy browser-stored session transcripts during secure config migration", async () => {
+    values.set(
+      "hermes.sessions.v1",
+      JSON.stringify([{ id: "old-local-session", messages: [{ text: "private" }] }]),
+    );
+
+    await loadConfig();
+
+    expect(values.has("hermes.sessions.v1")).toBe(false);
+  });
+
+  it("persists the public active profile and activates its isolated render cache", () => {
+    writeConfig({
+      ...defaultConfig,
+      baseUrl: "https://example.com",
+      activeProfile: "research",
+      profilePathPrefix: "/p/research",
+    });
+
+    expect(JSON.parse(values.get("hermes.config.v1") ?? "{}")).toMatchObject({
+      baseUrl: "https://example.com",
+      activeProfile: "research",
+      profilePathPrefix: "/p/research",
+    });
+    expect(activeSessionProfile()).toBe("research");
   });
 });
