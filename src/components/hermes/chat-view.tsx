@@ -23,6 +23,7 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
+import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
@@ -89,6 +90,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
+  const [watchNote, setWatchNote] = useState<string | null>(null);
   const submitGeneration = useRef(0);
   const pullGeneration = useRef(0);
 
@@ -168,14 +170,43 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       profileRun.release();
       pullRef.current = null;
     };
-  }, [
-    sessionId,
-    configured,
-    config.baseUrl,
-    config.token,
-    config.activeProfile,
-    config.profilePathPrefix,
-  ]);
+  }, [configured, config, sessionId, session?.title]);
+
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  useEffect(() => {
+    if (!configured) return;
+    const controller = new AbortController();
+    const generation = pullGeneration.current;
+    const profileRun = profileRunBoundary.start();
+    void followHostWatch(
+      config,
+      `/api/sessions/${encodeURIComponent(sessionId)}/watch`,
+      (frame) => {
+        if (frame.event !== "message.added") return;
+        if (statusRef.current === "streaming" || statusRef.current === "submitted") return;
+        if (generation !== pullGeneration.current || !profileRun.isCurrent()) return;
+        void pullSession(config, sessionId, profileRun.signal)
+          .then((messages) => {
+            if (generation !== pullGeneration.current || !profileRun.isCurrent()) return;
+            importGatewaySession(sessionId, session?.title ?? "Session", messages);
+          })
+          .catch(() => undefined);
+      },
+      controller.signal,
+    ).catch((err: unknown) => {
+      if (controller.signal.aborted) return;
+      if (err instanceof HermesError && err.status === 404) {
+        setWatchNote("Live updates start after the next gateway restart.");
+      }
+    });
+    return () => {
+      controller.abort();
+      profileRun.abort();
+      profileRun.release();
+    };
+  }, [configured, config, sessionId, session?.title]);
 
   const run = useCallback(
     async (history: HermesMessage[]) => {
@@ -496,6 +527,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               <p className="px-1 text-sm text-muted-foreground">Loading this conversation…</p>
             )}
             {pullError && <p className="px-1 text-sm text-destructive">{pullError}</p>}
+            {watchNote && <p className="px-1 text-xs text-muted-foreground">{watchNote}</p>}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
