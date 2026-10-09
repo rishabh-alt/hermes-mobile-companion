@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  Activity,
   Blocks,
   Bot,
   Calendar,
@@ -45,6 +46,7 @@ interface Props {
 }
 
 const MENU = [
+  { to: "/activity", label: "Activity", icon: Activity },
   { to: "/capabilities", label: "Capabilities", icon: Blocks },
   { to: "/messaging", label: "Messaging", icon: MessageSquare },
   { to: "/artifacts", label: "Artifacts", icon: FileText },

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as BotsRouteImport } from './routes/bots'
 import { Route as CapabilitiesRouteImport } from './routes/capabilities'
@@ -24,6 +25,11 @@ import { Route as CSessionIdRouteImport } from './routes/c.$sessionId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ActivityRoute = ActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ArtifactsRoute = ArtifactsRouteImport.update({
@@ -79,6 +85,7 @@ const CSessionIdRoute = CSessionIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
@@ -92,6 +99,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
@@ -106,6 +114,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/activity'
     | '/artifacts'
     | '/bots'
     | '/capabilities'
@@ -134,6 +144,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/activity'
     | '/artifacts'
     | '/bots'
     | '/capabilities'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/activity'
     | '/artifacts'
     | '/bots'
     | '/capabilities'
@@ -161,6 +173,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ActivityRoute: typeof ActivityRoute
   ArtifactsRoute: typeof ArtifactsRoute
   BotsRoute: typeof BotsRoute
   CapabilitiesRoute: typeof CapabilitiesRoute
@@ -180,6 +193,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/activity': {
+      id: '/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof ActivityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/artifacts': {
@@ -257,6 +277,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ActivityRoute: ActivityRoute,
   ArtifactsRoute: ArtifactsRoute,
   BotsRoute: BotsRoute,
   CapabilitiesRoute: CapabilitiesRoute,

@@ -164,7 +164,8 @@ These already have routes or belong beside Settings, not inside a fake form.
 - [ ] Artifacts.
 - [ ] Scheduled jobs.
 - [ ] Messaging.
-- [ ] Kanban and activity.
+- [x] Activity: read-only lanes for Telegram, CLI, cron, Kanban, and this phone. A missing host list stays unavailable. This is not a plugin install.
+- [ ] Kanban moves, comments, and accept.
 - [ ] Bots.
 
 ## Explicitly out
