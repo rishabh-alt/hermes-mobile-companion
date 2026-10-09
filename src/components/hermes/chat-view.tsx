@@ -23,6 +23,7 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
+import { respondToApproval, type ApprovalRequest } from "@/lib/hermes/approval";
 import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
@@ -91,6 +92,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const submitGeneration = useRef(0);
   const pullGeneration = useRef(0);
 
@@ -358,6 +360,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             onError: (message) => {
               throw new HermesError(message);
             },
+            onApproval: (request) => setApproval(request),
           },
         });
       };
@@ -534,6 +537,45 @@ export function ChatView({ sessionId }: { sessionId: string }) {
 
         <div className="safe-bottom border-t border-border/70 bg-background/90 px-3 pt-3 backdrop-blur-xl">
           <div className="mx-auto w-full max-w-3xl">
+            {approval && (
+              <div className="mb-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">
+                <p className="text-sm font-medium">Hermes wants to run this</p>
+                <pre className="overflow-x-auto text-xs">{approval.command}</pre>
+                <div className="flex flex-wrap gap-2">
+                  {approval.choices.map((choice) => (
+                    <Button
+                      key={choice}
+                      type="button"
+                      size="sm"
+                      variant={choice === "deny" ? "outline" : "default"}
+                      onClick={() => {
+                        void respondToApproval(config, {
+                          runId: approval.runId,
+                          choice,
+                          ...(approval.requestId ? { requestId: approval.requestId } : {}),
+                        })
+                          .then(() => setApproval(null))
+                          .catch((err: unknown) => {
+                            setWatchNote(
+                              err instanceof HermesError
+                                ? err.message
+                                : "The host refused that choice.",
+                            );
+                          });
+                      }}
+                    >
+                      {choice === "once"
+                        ? "Once"
+                        : choice === "session"
+                          ? "This session"
+                          : choice === "always"
+                            ? "Always"
+                            : "Deny"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
             <PromptInput
               onSubmit={send}
               accept="image/*,application/pdf,audio/*,text/*"
