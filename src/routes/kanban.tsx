@@ -1,5 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { GatewayPage } from "@/components/hermes/gateway-page";
+import { Button } from "@/components/ui/button";
+import { useHermesConfig } from "@/lib/hermes/config";
+import { commentOnCard, moveCard } from "@/lib/hermes/kanban-actions";
 import { useGateway } from "@/lib/hermes/useGateway";
 import { kanbanBoard } from "@/lib/hermes/rest";
 
@@ -51,8 +55,10 @@ function columnsOf(board: Record<string, unknown> | null): Column[] {
 }
 
 function KanbanRoute() {
+  const { config } = useHermesConfig();
   const board = useGateway(kanbanBoard, []);
   const columns = columnsOf(board.data);
+  const [note, setNote] = useState<string | null>(null);
 
   return (
     <GatewayPage
@@ -65,6 +71,7 @@ function KanbanRoute() {
       emptyText="This board is empty."
       onRefresh={board.refresh}
     >
+      {note && <p className="mb-2 text-xs text-muted-foreground">{note}</p>}
       <div className="-mx-4 flex gap-3 overflow-x-auto px-4">
         {columns.map((column, i) => {
           const cards = column.cards ?? column.items ?? [];
@@ -80,6 +87,49 @@ function KanbanRoute() {
                     <p className="text-sm">{card.title ?? card.text ?? "Untitled"}</p>
                     {card.description && (
                       <p className="mt-1 text-xs text-muted-foreground">{card.description}</p>
+                    )}
+                    {card.id && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const body = window.prompt("Comment");
+                            if (!body?.trim() || !card.id) return;
+                            void commentOnCard(config, card.id, body.trim())
+                              .then(() => board.refresh())
+                              .catch(() => setNote("The board did not take that comment."));
+                          }}
+                        >
+                          Comment
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (!card.id) return;
+                            void moveCard(config, card.id, "blocked")
+                              .then(() => board.refresh())
+                              .catch(() => setNote("The board did not block that card."));
+                          }}
+                        >
+                          Block
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            if (!card.id) return;
+                            void moveCard(config, card.id, "done")
+                              .then(() => board.refresh())
+                              .catch(() => setNote("The board did not accept that card."));
+                          }}
+                        >
+                          Accept
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}

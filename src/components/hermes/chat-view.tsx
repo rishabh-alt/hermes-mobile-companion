@@ -28,6 +28,7 @@ import { respondToApproval, type ApprovalRequest } from "@/lib/hermes/approval";
 import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
+import { answerClarify, type ClarifyRequest } from "@/lib/hermes/clarify";
 import { steerRun, transcriptText } from "@/lib/hermes/steer";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
 import { createRunGuard, profileRunBoundary } from "@/lib/hermes/run-guard";
@@ -95,6 +96,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [pullError, setPullError] = useState<string | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [clarify, setClarify] = useState<ClarifyRequest | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [steerText, setSteerText] = useState("");
   const [steerNote, setSteerNote] = useState<string | null>(null);
@@ -381,6 +383,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               throw new HermesError(message);
             },
             onApproval: (request) => setApproval(request),
+            onClarify: (request) => setClarify(request),
             onRun: (id) => setRunId(id),
           },
         });
@@ -402,6 +405,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setStatus("idle");
         setRunId(null);
         haptic("done");
+        if (document.hidden && "Notification" in window) {
+          if (Notification.permission === "granted") {
+            new Notification("Hermes finished", { body: "A turn on your phone is done." });
+          } else if (Notification.permission === "default") {
+            void Notification.requestPermission();
+          }
+        }
       } catch (err) {
         if (!isCurrentProfileRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
@@ -612,6 +622,26 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               </form>
             )}
             {steerNote && <p className="mb-2 text-xs text-muted-foreground">{steerNote}</p>}
+            {clarify && (
+              <div className="mb-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">
+                <p className="text-sm font-medium">Hermes needs an answer</p>
+                <p className="text-sm">{clarify.question}</p>
+                <div className="flex flex-wrap gap-2">
+                  {(clarify.choices.length > 0 ? clarify.choices : ["yes", "no"]).map((choice) => (
+                    <Button
+                      key={choice}
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        void answerClarify(config, clarify.id, choice).then(() => setClarify(null));
+                      }}
+                    >
+                      {choice}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
             {approval && (
               <div className="mb-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">
                 <p className="text-sm font-medium">Hermes wants to run this</p>

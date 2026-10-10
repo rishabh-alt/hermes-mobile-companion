@@ -1,5 +1,6 @@
 import { HermesError } from "./client";
 import { parseApprovalRequest } from "./approval";
+import { parseClarify } from "./clarify";
 import { readEventStream } from "./event-stream";
 import { api, type SessionInfo } from "./rest";
 import type { HermesConfig } from "./types";
@@ -80,6 +81,7 @@ export interface SessionStreamHandlers {
   onError: (message: string) => void;
   onApproval?: (request: import("./approval").ApprovalRequest) => void;
   onRun?: (runId: string) => void;
+  onClarify?: (request: import("./clarify").ClarifyRequest) => void;
 }
 
 export async function streamGatewaySession({
@@ -166,6 +168,10 @@ export async function streamGatewaySession({
         content: typeof payload["content"] === "string" ? payload["content"] : "",
         ...(runtime ? { runtime: runtime as { provider?: string; model?: string } } : {}),
       });
+    }
+    if (event === "tool.started" && payload["tool_name"] === "clarify") {
+      const request = parseClarify(payload);
+      if (request) handlers.onClarify?.(request);
     }
     if (event === "approval.request") {
       const request = parseApprovalRequest(payload);
