@@ -9,12 +9,27 @@ export interface ClarifyRequest {
 }
 
 export function parseClarify(payload: Record<string, unknown>): ClarifyRequest | null {
-  const args = payload["args"] && typeof payload["args"] === "object" ? (payload["args"] as Record<string, unknown>) : payload;
-  const question = typeof args["question"] === "string" ? args["question"] : typeof payload["preview"] === "string" ? payload["preview"] : "";
-  const id = typeof args["clarify_id"] === "string" ? args["clarify_id"] : typeof payload["tool_call_id"] === "string" ? payload["tool_call_id"] : "";
+  const args =
+    payload["args"] && typeof payload["args"] === "object"
+      ? (payload["args"] as Record<string, unknown>)
+      : payload;
+  const question =
+    typeof args["question"] === "string"
+      ? args["question"]
+      : typeof payload["preview"] === "string"
+        ? payload["preview"]
+        : "";
+  const id =
+    typeof args["clarify_id"] === "string"
+      ? args["clarify_id"]
+      : typeof payload["tool_call_id"] === "string"
+        ? payload["tool_call_id"]
+        : "";
   if (!question.trim() || !id.trim()) return null;
   const raw = Array.isArray(args["choices"]) ? args["choices"] : [];
-  const choices = raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  const choices = raw.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
   return { id, question: question.trim(), choices };
 }
 

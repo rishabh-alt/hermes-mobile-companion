@@ -13,6 +13,7 @@ export async function nativeGet(
     readTimeout: timeoutMs,
     responseType: "text",
   });
-  const data = typeof response.data === "string" ? response.data : JSON.stringify(response.data ?? "");
+  const data =
+    typeof response.data === "string" ? response.data : JSON.stringify(response.data ?? "");
   return { status: response.status, data };
 }

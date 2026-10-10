@@ -11,7 +11,8 @@ export function toolSummary(name: string, content: unknown): string {
   if (raw.startsWith("{")) {
     try {
       const data = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof data["output"] === "string") return firstLine(data["output"]) || `${name} finished`;
+      if (typeof data["output"] === "string")
+        return firstLine(data["output"]) || `${name} finished`;
       if (typeof data["content"] === "string") return `${name} read a file`;
       if (data["success"] === true) return `${name} finished`;
     } catch {

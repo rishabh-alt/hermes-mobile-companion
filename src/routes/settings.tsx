@@ -362,8 +362,16 @@ function HostDoorPanel({
       : sectionId === "voice"
         ? { key: "voice.submit_mode", label: "Voice submit", hint: "direct or draft" }
         : sectionId === "providers"
-          ? { key: "OPENAI_API_KEY", label: "Provider key", hint: "Write-only. Not stored on this phone." }
-          : { key: "terminal.backend", label: "Terminal backend", hint: "local, docker, ssh, and the other host backends" };
+          ? {
+              key: "OPENAI_API_KEY",
+              label: "Provider key",
+              hint: "Write-only. Not stored on this phone.",
+            }
+          : {
+              key: "terminal.backend",
+              label: "Terminal backend",
+              hint: "local, docker, ssh, and the other host backends",
+            };
   return (
     <form
       className="space-y-2"

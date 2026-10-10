@@ -63,17 +63,24 @@ function MemoryRoute() {
             body: JSON.stringify({ text }),
           })
             .then(async (response) => {
-              if (!response.ok) throw new HermesError("The host did not take that correction.", response.status);
+              if (!response.ok)
+                throw new HermesError("The host did not take that correction.", response.status);
               setCorrection("");
               setNote("Saved on the host.");
               memory.refresh();
             })
             .catch((err: unknown) =>
-              setNote(err instanceof HermesError ? err.message : "The host did not take that correction."),
+              setNote(
+                err instanceof HermesError ? err.message : "The host did not take that correction.",
+              ),
             );
         }}
       >
-        <Input value={correction} onChange={(event) => setCorrection(event.target.value)} placeholder="Correct a memory" />
+        <Input
+          value={correction}
+          onChange={(event) => setCorrection(event.target.value)}
+          placeholder="Correct a memory"
+        />
         <Button type="submit">Save</Button>
       </form>
       {note && <p className="mb-2 text-xs text-muted-foreground">{note}</p>}
