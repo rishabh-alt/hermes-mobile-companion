@@ -79,6 +79,7 @@ export interface SessionStreamHandlers {
   }) => void;
   onError: (message: string) => void;
   onApproval?: (request: import("./approval").ApprovalRequest) => void;
+  onRun?: (runId: string) => void;
 }
 
 export async function streamGatewaySession({
@@ -155,6 +156,7 @@ export async function streamGatewaySession({
     } catch {
       return;
     }
+    if (typeof payload["run_id"] === "string") handlers.onRun?.(payload["run_id"]);
     if (event === "assistant.delta" && typeof payload["delta"] === "string")
       handlers.onText(payload["delta"]);
     if (event === "assistant.completed") {
