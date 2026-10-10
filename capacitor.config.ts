@@ -17,6 +17,11 @@ const config: CapacitorConfig = {
   android: {
     backgroundColor: "#141414",
   },
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
 };
 
 export default config;
