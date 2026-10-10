@@ -15,6 +15,9 @@ import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
+import { note } from "@/lib/hermes/debug-log";
+import { saveHostSetting } from "@/lib/hermes/settings-door";
+import { nativeGet } from "@/lib/hermes/native-get";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -45,6 +48,7 @@ function SettingsRoute() {
     admin_config_rw?: boolean;
     model_options?: boolean;
     model_admin?: boolean;
+    settings_admin?: boolean;
   }>({});
   const [probes, setProbes] = useState<ProbeRow[]>([]);
   const [checking, setChecking] = useState(false);
@@ -91,6 +95,7 @@ function SettingsRoute() {
         admin_config_rw: raw["admin_config_rw"] === true,
         model_options: raw["model_options"] === true,
         model_admin: raw["model_admin"] === true,
+        settings_admin: raw["settings_admin"] === true,
       });
       if (raw["model_options"] === true && !config.model) {
         try {
@@ -146,47 +151,58 @@ function SettingsRoute() {
               </AccordionTrigger>
               <AccordionContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">{section.summary}</p>
-                {section.id === "connection" && (
-                  <ConnectionFields
-                    config={config}
-                    update={update}
-                    checking={checking}
-                    probes={probes}
-                    onCheck={checkHost}
-                  />
-                )}
-                {section.id === "appearance" && (
-                  <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
-                    <div>
-                      <p className="text-sm font-medium">Haptics</p>
-                      <p className="text-xs text-muted-foreground">
-                        Vibrate on send, finish, and errors.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={config.haptics}
-                      onCheckedChange={(value) => update({ haptics: value })}
-                    />
-                  </div>
-                )}
-                {section.id === "model" && section.access === "read" && (
-                  <div className="space-y-2">
-                    <Button type="button" variant="outline" onClick={loadModels}>
-                      Read host models
-                    </Button>
-                    {modelNote && <p className="text-xs text-muted-foreground">{modelNote}</p>}
-                    {models.length > 0 && (
-                      <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
-                        {models.map((id) => (
-                          <li key={id}>{id}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-                {section.id === "model" && <ModelAdminPanel config={config} update={update} />}
-                {section.reason && (
+                {section.access === "blocked" ? (
                   <p className="text-sm text-muted-foreground">{section.reason}</p>
+                ) : (
+                  <>
+                    {section.id === "connection" && (
+                      <ConnectionFields
+                        config={config}
+                        update={update}
+                        checking={checking}
+                        probes={probes}
+                        onCheck={checkHost}
+                      />
+                    )}
+                    {section.id === "appearance" && (
+                      <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+                        <div>
+                          <p className="text-sm font-medium">Haptics</p>
+                          <p className="text-xs text-muted-foreground">
+                            Vibrate on send, finish, and errors.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={config.haptics}
+                          onCheckedChange={(value) => update({ haptics: value })}
+                        />
+                      </div>
+                    )}
+                    {section.id === "model" && section.access === "read" && (
+                      <div className="space-y-2">
+                        <Button type="button" variant="outline" onClick={loadModels}>
+                          Read host models
+                        </Button>
+                        {modelNote && <p className="text-xs text-muted-foreground">{modelNote}</p>}
+                        {models.length > 0 && (
+                          <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                            {models.map((id) => (
+                              <li key={id}>{id}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                    {section.id === "model" && section.access === "write" && (
+                      <ModelAdminPanel config={config} update={update} />
+                    )}
+                    {section.access === "write" && section.id !== "model" && (
+                      <HostDoorPanel config={config} sectionId={section.id} />
+                    )}
+                    {section.reason && (
+                      <p className="text-sm text-muted-foreground">{section.reason}</p>
+                    )}
+                  </>
                 )}
               </AccordionContent>
             </AccordionItem>
@@ -280,6 +296,9 @@ function ConnectionFields({
       <Button asChild variant="outline" className="w-full">
         <Link to="/status">Connection &amp; usage</Link>
       </Button>
+      <Button asChild variant="outline" className="w-full">
+        <Link to="/debug">Debug log</Link>
+      </Button>
     </div>
   );
 }
@@ -291,27 +310,25 @@ async function runProbe(
   path: string,
 ): Promise<ProbeRow & { payload?: unknown }> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
     const headers: Record<string, string> = {};
     if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
-    const response = await fetch(composeGatewayUrl(config, path), {
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const status = interpretProbe({ ok: response.ok, status: response.status });
+    const response = await nativeGet(composeGatewayUrl(config, path), headers);
+    const ok = response.status >= 200 && response.status < 300;
+    const status = interpretProbe({ ok, status: response.status });
     let payload: unknown;
-    if (response.ok) {
+    if (ok) {
       try {
-        payload = await response.json();
+        payload = JSON.parse(response.data) as unknown;
       } catch {
         payload = undefined;
       }
     }
     return { id, label, status, payload };
   } catch (err) {
-    const isTimeout = err instanceof DOMException && err.name === "AbortError";
+    const isTimeout =
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && /timeout/i.test(err.message));
+    note(`${label} transport${isTimeout ? " timeout" : ""}`);
     return {
       id,
       label,
@@ -328,6 +345,61 @@ function accessLabel(section: SettingsSection) {
   if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
   return "Host has not opened this";
+}
+
+function HostDoorPanel({
+  config,
+  sectionId,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+  sectionId: string;
+}) {
+  const [value, setValue] = useState("");
+  const [noteText, setNoteText] = useState<string | null>(null);
+  const field =
+    sectionId === "safety"
+      ? { key: "approvals.mode", label: "Approval mode", hint: "manual, smart, or off" }
+      : sectionId === "voice"
+        ? { key: "voice.submit_mode", label: "Voice submit", hint: "direct or draft" }
+        : sectionId === "providers"
+          ? {
+              key: "OPENAI_API_KEY",
+              label: "Provider key",
+              hint: "Write-only. Not stored on this phone.",
+            }
+          : {
+              key: "terminal.backend",
+              label: "Terminal backend",
+              hint: "local, docker, ssh, and the other host backends",
+            };
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void saveHostSetting(config, field.key, value)
+          .then(() => {
+            if (sectionId === "providers") setValue("");
+            setNoteText("Saved and read back from the host.");
+          })
+          .catch((err: unknown) =>
+            setNoteText(err instanceof HermesError ? err.message : "The host refused that change."),
+          );
+      }}
+    >
+      <Label htmlFor={field.key}>{field.label}</Label>
+      <Input
+        id={field.key}
+        type={sectionId === "providers" ? "password" : "text"}
+        value={value}
+        autoComplete="off"
+        placeholder={field.hint}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <Button type="submit">Save</Button>
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </form>
+  );
 }
 
 function ModelAdminPanel({

@@ -11,7 +11,19 @@ describe("settingsSections", () => {
     const sections = settingsSections({ admin_config_rw: false, model_options: true });
     expect(sections.find((section) => section.id === "appearance")?.access).toBe("phone");
     expect(sections.find((section) => section.id === "safety")?.access).toBe("blocked");
-    expect(sections.find((section) => section.id === "safety")?.reason).toMatch(/config/i);
+    expect(sections.find((section) => section.id === "safety")?.reason).toBe(
+      "Missing door: safety write",
+    );
+  });
+
+  it("opens safety only when the typed settings door is advertised", () => {
+    expect(
+      settingsSections({ settings_admin: true }).find((section) => section.id === "safety")?.access,
+    ).toBe("write");
+    expect(
+      settingsSections({ admin_config_rw: true }).find((section) => section.id === "safety")
+        ?.access,
+    ).toBe("blocked");
   });
 
   it("opens model saves only through the separate admin door", () => {

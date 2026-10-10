@@ -37,6 +37,7 @@ import {
 } from "@/lib/hermes/rest";
 import { createGatewaySession } from "@/lib/hermes/session-api";
 import { useHermesConfig } from "@/lib/hermes/config";
+import { sessionLabel } from "@/lib/hermes/session-title";
 import { cn } from "@/lib/utils";
 import { ProfileSwitcher } from "@/components/hermes/profile-switcher";
 
@@ -156,7 +157,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               className="min-w-0 flex-1 py-2 pl-2 text-left"
             >
               <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
-                {session.title}
+                {sessionLabel(session)}
               </p>
               <p className="truncate pt-0.5 text-xs text-muted-foreground">
                 {session.model ? `${session.model.split("/").pop()} · ` : ""}
@@ -343,7 +344,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                     className="block rounded-lg px-3 py-2 hover:bg-sidebar-accent/60"
                   >
                     <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
-                      {item.title ?? item.id}
+                      {sessionLabel(item)}
                     </p>
                     <p className="truncate pt-0.5 text-xs text-muted-foreground">
                       {[

@@ -117,15 +117,27 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   },
 ];
 
-const BLOCKED = "This gateway does not advertise config changes.";
-
 export function settingsSections(features: {
   admin_config_rw?: boolean;
   model_options?: boolean;
   model_admin?: boolean;
+  settings_admin?: boolean;
 }): SettingsSection[] {
+  const opened = new Set(
+    features.settings_admin ? ["safety", "voice", "providers", "runtime"] : [],
+  );
   return CATALOG.map((section) => {
     if (section.kind === "phone") return { ...section, access: "phone" };
+    if (opened.has(section.id)) {
+      return {
+        ...section,
+        access: "write",
+        reason:
+          section.id === "providers"
+            ? "Provider keys are write-only. The phone does not keep them."
+            : "Saves through the admin key, not the chat token.",
+      };
+    }
     if (section.kind === "model" && features.model_admin) {
       return {
         ...section,
@@ -140,7 +152,7 @@ export function settingsSections(features: {
         reason: "The model list can be read. Saving the host default needs the model admin door.",
       };
     }
-    return { ...section, access: "blocked", reason: BLOCKED };
+    return { ...section, access: "blocked", reason: `Missing door: ${section.id} write` };
   });
 }
 
