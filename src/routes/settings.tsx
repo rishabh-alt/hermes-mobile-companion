@@ -16,6 +16,7 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { note } from "@/lib/hermes/debug-log";
+import { saveHostSetting } from "@/lib/hermes/settings-door";
 import { nativeGet } from "@/lib/hermes/native-get";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
@@ -47,6 +48,7 @@ function SettingsRoute() {
     admin_config_rw?: boolean;
     model_options?: boolean;
     model_admin?: boolean;
+    settings_admin?: boolean;
   }>({});
   const [probes, setProbes] = useState<ProbeRow[]>([]);
   const [checking, setChecking] = useState(false);
@@ -93,6 +95,7 @@ function SettingsRoute() {
         admin_config_rw: raw["admin_config_rw"] === true,
         model_options: raw["model_options"] === true,
         model_admin: raw["model_admin"] === true,
+        settings_admin: raw["settings_admin"] === true,
       });
       if (raw["model_options"] === true && !config.model) {
         try {
@@ -192,6 +195,9 @@ function SettingsRoute() {
                     )}
                     {section.id === "model" && section.access === "write" && (
                       <ModelAdminPanel config={config} update={update} />
+                    )}
+                    {section.access === "write" && section.id !== "model" && (
+                      <HostDoorPanel config={config} sectionId={section.id} />
                     )}
                     {section.reason && (
                       <p className="text-sm text-muted-foreground">{section.reason}</p>
@@ -339,6 +345,53 @@ function accessLabel(section: SettingsSection) {
   if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
   return "Host has not opened this";
+}
+
+function HostDoorPanel({
+  config,
+  sectionId,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+  sectionId: string;
+}) {
+  const [value, setValue] = useState("");
+  const [noteText, setNoteText] = useState<string | null>(null);
+  const field =
+    sectionId === "safety"
+      ? { key: "approvals.mode", label: "Approval mode", hint: "manual, smart, or off" }
+      : sectionId === "voice"
+        ? { key: "voice.submit_mode", label: "Voice submit", hint: "direct or draft" }
+        : sectionId === "providers"
+          ? { key: "OPENAI_API_KEY", label: "Provider key", hint: "Write-only. Not stored on this phone." }
+          : { key: "terminal.backend", label: "Terminal backend", hint: "local, docker, ssh, and the other host backends" };
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void saveHostSetting(config, field.key, value)
+          .then(() => {
+            if (sectionId === "providers") setValue("");
+            setNoteText("Saved and read back from the host.");
+          })
+          .catch((err: unknown) =>
+            setNoteText(err instanceof HermesError ? err.message : "The host refused that change."),
+          );
+      }}
+    >
+      <Label htmlFor={field.key}>{field.label}</Label>
+      <Input
+        id={field.key}
+        type={sectionId === "providers" ? "password" : "text"}
+        value={value}
+        autoComplete="off"
+        placeholder={field.hint}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <Button type="submit">Save</Button>
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </form>
+  );
 }
 
 function ModelAdminPanel({

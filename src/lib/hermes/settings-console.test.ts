@@ -16,6 +16,15 @@ describe("settingsSections", () => {
     );
   });
 
+  it("opens safety only when the typed settings door is advertised", () => {
+    expect(settingsSections({ settings_admin: true }).find((section) => section.id === "safety")?.access).toBe(
+      "write",
+    );
+    expect(settingsSections({ admin_config_rw: true }).find((section) => section.id === "safety")?.access).toBe(
+      "blocked",
+    );
+  });
+
   it("opens model saves only through the separate admin door", () => {
     const model = settingsSections({ model_admin: true, admin_config_rw: false }).find(
       (section) => section.id === "model",
