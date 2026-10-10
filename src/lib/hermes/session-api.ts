@@ -1,4 +1,5 @@
 import { HermesError } from "./client";
+import { parseApprovalRequest } from "./approval";
 import { api, type SessionInfo } from "./rest";
 import type { HermesConfig } from "./types";
 import { composeGatewayUrl } from "./profiles";
@@ -76,6 +77,7 @@ export interface SessionStreamHandlers {
     runtime?: { provider?: string; model?: string };
   }) => void;
   onError: (message: string) => void;
+  onApproval?: (request: import("./approval").ApprovalRequest) => void;
 }
 
 export async function streamGatewaySession({
@@ -164,6 +166,10 @@ export async function streamGatewaySession({
         content: typeof payload["content"] === "string" ? payload["content"] : "",
         ...(runtime ? { runtime: runtime as { provider?: string; model?: string } } : {}),
       });
+    }
+    if (event === "approval.request") {
+      const request = parseApprovalRequest(payload);
+      if (request) handlers.onApproval?.(request);
     }
     if (event === "error")
       handlers.onError(

@@ -59,9 +59,20 @@ function SettingsRoute() {
     setChecking(true);
     setProbes([]);
     try {
-      const rows = await Promise.all(
+      const results = await Promise.allSettled(
         DIAGNOSTIC_PROBES.map((probe) => runProbe(config, probe.id, probe.label, probe.path)),
       );
+      const rows = results.map((r, i) => {
+        const probe = DIAGNOSTIC_PROBES[i]!;
+        return r.status === "fulfilled"
+          ? r.value
+          : {
+              id: probe.id,
+              label: probe.label,
+              status: "transport" as ProbeStatus,
+              detail: "Probe crashed unexpectedly.",
+            };
+      });
       const sessions = rows.find((row) => row.id === "sessions");
       if (sessions?.status === "ok") {
         const path = firstSessionMessagesPath(sessions.payload);
@@ -280,9 +291,15 @@ async function runProbe(
   path: string,
 ): Promise<ProbeRow & { payload?: unknown }> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     const headers: Record<string, string> = {};
     if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
-    const response = await fetch(composeGatewayUrl(config, path), { headers });
+    const response = await fetch(composeGatewayUrl(config, path), {
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
     const status = interpretProbe({ ok: response.ok, status: response.status });
     let payload: unknown;
     if (response.ok) {
@@ -293,8 +310,16 @@ async function runProbe(
       }
     }
     return { id, label, status, payload };
-  } catch {
-    return { id, label, status: interpretProbe({ ok: false, transport: true }) };
+  } catch (err) {
+    const isTimeout = err instanceof DOMException && err.name === "AbortError";
+    return {
+      id,
+      label,
+      status: interpretProbe({ ok: false, transport: true }),
+      ...(isTimeout
+        ? { detail: "Timed out after 10 s — the phone may not be able to reach this host." }
+        : {}),
+    };
   }
 }
 
