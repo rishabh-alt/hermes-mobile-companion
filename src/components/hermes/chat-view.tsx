@@ -23,6 +23,7 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
+import { sessionLabel } from "@/lib/hermes/session-title";
 import { respondToApproval, type ApprovalRequest } from "@/lib/hermes/approval";
 import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
@@ -149,7 +150,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     pullSession(config, sessionId, profileRun.signal)
       .then((messages) => {
         if (cancelled || generation !== pullGeneration.current || !profileRun.isCurrent()) return;
-        importGatewaySession(sessionId, session?.title ?? "Session", messages);
+        importGatewaySession(
+          sessionId,
+          sessionLabel({
+            ...(session?.title ? { title: session.title } : {}),
+            messages,
+          }),
+          messages,
+        );
         setPulling(false);
       })
       .catch((err: unknown) => {
@@ -192,7 +200,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         void pullSession(config, sessionId, profileRun.signal)
           .then((messages) => {
             if (generation !== pullGeneration.current || !profileRun.isCurrent()) return;
-            importGatewaySession(sessionId, session?.title ?? "Session", messages);
+            importGatewaySession(
+              sessionId,
+              sessionLabel({
+                ...(session?.title ? { title: session.title } : {}),
+                messages,
+              }),
+              messages,
+            );
           })
           .catch(() => undefined);
       },
