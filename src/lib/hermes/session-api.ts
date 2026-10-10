@@ -1,5 +1,6 @@
 import { HermesError } from "./client";
 import { parseApprovalRequest } from "./approval";
+import { readEventStream } from "./event-stream";
 import { api, type SessionInfo } from "./rest";
 import type { HermesConfig } from "./types";
 import { composeGatewayUrl } from "./profiles";
@@ -135,9 +136,6 @@ export async function streamGatewaySession({
     throw new HermesError(`Gateway returned ${response.status}`, response.status);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let completed = false;
   const dispatch = (frame: string) => {
     const lines = frame.split("\n");
@@ -176,14 +174,6 @@ export async function streamGatewaySession({
         typeof payload["message"] === "string" ? payload["message"] : "Hermes stream failed.",
       );
   };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    frames.forEach(dispatch);
-  }
-  if (buffer.trim()) dispatch(buffer);
+  await readEventStream(response.body, dispatch);
   if (!completed) throw new HermesError("The stream ended before Hermes completed the turn.");
 }

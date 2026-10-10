@@ -15,6 +15,7 @@ import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
+import { nativeGet } from "@/lib/hermes/native-get";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -291,27 +292,24 @@ async function runProbe(
   path: string,
 ): Promise<ProbeRow & { payload?: unknown }> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
     const headers: Record<string, string> = {};
     if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
-    const response = await fetch(composeGatewayUrl(config, path), {
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const status = interpretProbe({ ok: response.ok, status: response.status });
+    const response = await nativeGet(composeGatewayUrl(config, path), headers);
+    const ok = response.status >= 200 && response.status < 300;
+    const status = interpretProbe({ ok, status: response.status });
     let payload: unknown;
-    if (response.ok) {
+    if (ok) {
       try {
-        payload = await response.json();
+        payload = JSON.parse(response.data) as unknown;
       } catch {
         payload = undefined;
       }
     }
     return { id, label, status, payload };
   } catch (err) {
-    const isTimeout = err instanceof DOMException && err.name === "AbortError";
+    const isTimeout =
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof Error && /timeout/i.test(err.message));
     return {
       id,
       label,
