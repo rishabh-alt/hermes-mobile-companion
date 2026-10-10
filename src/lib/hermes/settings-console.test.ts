@@ -11,7 +11,9 @@ describe("settingsSections", () => {
     const sections = settingsSections({ admin_config_rw: false, model_options: true });
     expect(sections.find((section) => section.id === "appearance")?.access).toBe("phone");
     expect(sections.find((section) => section.id === "safety")?.access).toBe("blocked");
-    expect(sections.find((section) => section.id === "safety")?.reason).toMatch(/config/i);
+    expect(sections.find((section) => section.id === "safety")?.reason).toBe(
+      "Missing door: safety write",
+    );
   });
 
   it("opens model saves only through the separate admin door", () => {

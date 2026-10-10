@@ -117,8 +117,6 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   },
 ];
 
-const BLOCKED = "This gateway does not advertise config changes.";
-
 export function settingsSections(features: {
   admin_config_rw?: boolean;
   model_options?: boolean;
@@ -140,7 +138,7 @@ export function settingsSections(features: {
         reason: "The model list can be read. Saving the host default needs the model admin door.",
       };
     }
-    return { ...section, access: "blocked", reason: BLOCKED };
+    return { ...section, access: "blocked", reason: `Missing door: ${section.id} write` };
   });
 }
 

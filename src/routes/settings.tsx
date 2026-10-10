@@ -15,6 +15,7 @@ import { fetchModels, HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
+import { note } from "@/lib/hermes/debug-log";
 import { nativeGet } from "@/lib/hermes/native-get";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
@@ -147,47 +148,55 @@ function SettingsRoute() {
               </AccordionTrigger>
               <AccordionContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">{section.summary}</p>
-                {section.id === "connection" && (
-                  <ConnectionFields
-                    config={config}
-                    update={update}
-                    checking={checking}
-                    probes={probes}
-                    onCheck={checkHost}
-                  />
-                )}
-                {section.id === "appearance" && (
-                  <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
-                    <div>
-                      <p className="text-sm font-medium">Haptics</p>
-                      <p className="text-xs text-muted-foreground">
-                        Vibrate on send, finish, and errors.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={config.haptics}
-                      onCheckedChange={(value) => update({ haptics: value })}
-                    />
-                  </div>
-                )}
-                {section.id === "model" && section.access === "read" && (
-                  <div className="space-y-2">
-                    <Button type="button" variant="outline" onClick={loadModels}>
-                      Read host models
-                    </Button>
-                    {modelNote && <p className="text-xs text-muted-foreground">{modelNote}</p>}
-                    {models.length > 0 && (
-                      <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
-                        {models.map((id) => (
-                          <li key={id}>{id}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-                {section.id === "model" && <ModelAdminPanel config={config} update={update} />}
-                {section.reason && (
+                {section.access === "blocked" ? (
                   <p className="text-sm text-muted-foreground">{section.reason}</p>
+                ) : (
+                  <>
+                    {section.id === "connection" && (
+                      <ConnectionFields
+                        config={config}
+                        update={update}
+                        checking={checking}
+                        probes={probes}
+                        onCheck={checkHost}
+                      />
+                    )}
+                    {section.id === "appearance" && (
+                      <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+                        <div>
+                          <p className="text-sm font-medium">Haptics</p>
+                          <p className="text-xs text-muted-foreground">
+                            Vibrate on send, finish, and errors.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={config.haptics}
+                          onCheckedChange={(value) => update({ haptics: value })}
+                        />
+                      </div>
+                    )}
+                    {section.id === "model" && section.access === "read" && (
+                      <div className="space-y-2">
+                        <Button type="button" variant="outline" onClick={loadModels}>
+                          Read host models
+                        </Button>
+                        {modelNote && <p className="text-xs text-muted-foreground">{modelNote}</p>}
+                        {models.length > 0 && (
+                          <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                            {models.map((id) => (
+                              <li key={id}>{id}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                    {section.id === "model" && section.access === "write" && (
+                      <ModelAdminPanel config={config} update={update} />
+                    )}
+                    {section.reason && (
+                      <p className="text-sm text-muted-foreground">{section.reason}</p>
+                    )}
+                  </>
                 )}
               </AccordionContent>
             </AccordionItem>
@@ -281,6 +290,9 @@ function ConnectionFields({
       <Button asChild variant="outline" className="w-full">
         <Link to="/status">Connection &amp; usage</Link>
       </Button>
+      <Button asChild variant="outline" className="w-full">
+        <Link to="/debug">Debug log</Link>
+      </Button>
     </div>
   );
 }
@@ -310,6 +322,7 @@ async function runProbe(
     const isTimeout =
       (err instanceof DOMException && err.name === "AbortError") ||
       (err instanceof Error && /timeout/i.test(err.message));
+    note(`${label} transport${isTimeout ? " timeout" : ""}`);
     return {
       id,
       label,
