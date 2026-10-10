@@ -107,6 +107,7 @@ export interface GatewayMessage {
   created_at?: string | number;
   reasoning?: string;
   model?: string;
+  tool_name?: string;
 }
 
 export async function fetchSessionMessages(
