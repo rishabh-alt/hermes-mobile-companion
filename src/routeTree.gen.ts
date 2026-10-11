@@ -14,6 +14,7 @@ import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as BotsRouteImport } from './routes/bots'
 import { Route as CapabilitiesRouteImport } from './routes/capabilities'
+import { Route as DebugRouteImport } from './routes/debug'
 import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as KanbanRouteImport } from './routes/kanban'
 import { Route as MemoryRouteImport } from './routes/memory'
@@ -45,6 +46,11 @@ const BotsRoute = BotsRouteImport.update({
 const CapabilitiesRoute = CapabilitiesRouteImport.update({
   id: '/capabilities',
   path: '/capabilities',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DebugRoute = DebugRouteImport.update({
+  id: '/debug',
+  path: '/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JobsRoute = JobsRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
+  '/debug': typeof DebugRoute
   '/jobs': typeof JobsRoute
   '/kanban': typeof KanbanRoute
   '/memory': typeof MemoryRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
+  '/debug': typeof DebugRoute
   '/jobs': typeof JobsRoute
   '/kanban': typeof KanbanRoute
   '/memory': typeof MemoryRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/artifacts': typeof ArtifactsRoute
   '/bots': typeof BotsRoute
   '/capabilities': typeof CapabilitiesRoute
+  '/debug': typeof DebugRoute
   '/jobs': typeof JobsRoute
   '/kanban': typeof KanbanRoute
   '/memory': typeof MemoryRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/bots'
     | '/capabilities'
+    | '/debug'
     | '/jobs'
     | '/kanban'
     | '/memory'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/bots'
     | '/capabilities'
+    | '/debug'
     | '/jobs'
     | '/kanban'
     | '/memory'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/bots'
     | '/capabilities'
+    | '/debug'
     | '/jobs'
     | '/kanban'
     | '/memory'
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   ArtifactsRoute: typeof ArtifactsRoute
   BotsRoute: typeof BotsRoute
   CapabilitiesRoute: typeof CapabilitiesRoute
+  DebugRoute: typeof DebugRoute
   JobsRoute: typeof JobsRoute
   KanbanRoute: typeof KanbanRoute
   MemoryRoute: typeof MemoryRoute
@@ -221,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/capabilities'
       fullPath: '/capabilities'
       preLoaderRoute: typeof CapabilitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/debug': {
+      id: '/debug'
+      path: '/debug'
+      fullPath: '/debug'
+      preLoaderRoute: typeof DebugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/jobs': {
@@ -281,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRoute: ArtifactsRoute,
   BotsRoute: BotsRoute,
   CapabilitiesRoute: CapabilitiesRoute,
+  DebugRoute: DebugRoute,
   JobsRoute: JobsRoute,
   KanbanRoute: KanbanRoute,
   MemoryRoute: MemoryRoute,

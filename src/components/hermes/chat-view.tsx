@@ -23,10 +23,13 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { pullSession } from "@/lib/hermes/session-sync";
+import { sessionLabel } from "@/lib/hermes/session-title";
 import { respondToApproval, type ApprovalRequest } from "@/lib/hermes/approval";
 import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
+import { answerClarify, type ClarifyRequest } from "@/lib/hermes/clarify";
+import { steerRun, transcriptText } from "@/lib/hermes/steer";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
 import { createRunGuard, profileRunBoundary } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
@@ -93,6 +96,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [pullError, setPullError] = useState<string | null>(null);
   const [watchNote, setWatchNote] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [clarify, setClarify] = useState<ClarifyRequest | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [steerText, setSteerText] = useState("");
+  const [steerNote, setSteerNote] = useState<string | null>(null);
+  const [queued, setQueued] = useState<string | null>(null);
   const submitGeneration = useRef(0);
   const pullGeneration = useRef(0);
 
@@ -149,7 +157,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     pullSession(config, sessionId, profileRun.signal)
       .then((messages) => {
         if (cancelled || generation !== pullGeneration.current || !profileRun.isCurrent()) return;
-        importGatewaySession(sessionId, session?.title ?? "Session", messages);
+        importGatewaySession(
+          sessionId,
+          sessionLabel({
+            ...(session?.title ? { title: session.title } : {}),
+            messages,
+          }),
+          messages,
+        );
         setPulling(false);
       })
       .catch((err: unknown) => {
@@ -192,7 +207,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         void pullSession(config, sessionId, profileRun.signal)
           .then((messages) => {
             if (generation !== pullGeneration.current || !profileRun.isCurrent()) return;
-            importGatewaySession(sessionId, session?.title ?? "Session", messages);
+            importGatewaySession(
+              sessionId,
+              sessionLabel({
+                ...(session?.title ? { title: session.title } : {}),
+                messages,
+              }),
+              messages,
+            );
           })
           .catch(() => undefined);
       },
@@ -361,6 +383,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               throw new HermesError(message);
             },
             onApproval: (request) => setApproval(request),
+            onClarify: (request) => setClarify(request),
+            onRun: (id) => setRunId(id),
           },
         });
       };
@@ -379,7 +403,15 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           activeProvider,
         );
         setStatus("idle");
+        setRunId(null);
         haptic("done");
+        if (document.hidden && "Notification" in window) {
+          if (Notification.permission === "granted") {
+            new Notification("Hermes finished", { body: "A turn on your phone is done." });
+          } else if (Notification.permission === "default") {
+            void Notification.requestPermission();
+          }
+        }
       } catch (err) {
         if (!isCurrentProfileRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
@@ -437,6 +469,13 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     void run(history);
   };
 
+  useEffect(() => {
+    if (status !== "idle" || !queued) return;
+    const next = queued;
+    setQueued(null);
+    void send({ text: next, files: [] });
+  }, [queued, status, send]);
+
   const retry = () => {
     const trimmed = [...messages];
     while (trimmed.length && trimmed[trimmed.length - 1]!.role === "assistant") trimmed.pop();
@@ -475,14 +514,27 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         </span>
       }
       right={
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Model and route"
-          onClick={() => setModelSheet(true)}
-        >
-          <Cpu />
-        </Button>
+        <div className="flex items-center">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              void navigator.clipboard?.writeText(transcriptText(shown));
+              haptic("done");
+            }}
+          >
+            Copy
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Model and route"
+            onClick={() => setModelSheet(true)}
+          >
+            <Cpu />
+          </Button>
+        </div>
       }
     >
       <div className="flex h-full flex-col">
@@ -537,6 +589,59 @@ export function ChatView({ sessionId }: { sessionId: string }) {
 
         <div className="safe-bottom border-t border-border/70 bg-background/90 px-3 pt-3 backdrop-blur-xl">
           <div className="mx-auto w-full max-w-3xl">
+            {busy && (
+              <form
+                className="mb-3 flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const text = steerText.trim();
+                  if (!text) return;
+                  if (runId) {
+                    void steerRun(config, runId, text)
+                      .then(() => {
+                        setSteerText("");
+                        setSteerNote("Sent into this turn.");
+                      })
+                      .catch(() => setSteerNote("The host did not take that steer."));
+                    return;
+                  }
+                  setQueued(text);
+                  setSteerText("");
+                  setSteerNote("Queued. It sends when this turn ends.");
+                }}
+              >
+                <input
+                  value={steerText}
+                  onChange={(event) => setSteerText(event.target.value)}
+                  placeholder={runId ? "Steer this turn" : "Queue for after this turn"}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-transparent px-3 py-2 text-sm"
+                />
+                <Button type="submit" size="sm" variant="outline">
+                  {runId ? "Steer" : "Queue"}
+                </Button>
+              </form>
+            )}
+            {steerNote && <p className="mb-2 text-xs text-muted-foreground">{steerNote}</p>}
+            {clarify && (
+              <div className="mb-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">
+                <p className="text-sm font-medium">Hermes needs an answer</p>
+                <p className="text-sm">{clarify.question}</p>
+                <div className="flex flex-wrap gap-2">
+                  {(clarify.choices.length > 0 ? clarify.choices : ["yes", "no"]).map((choice) => (
+                    <Button
+                      key={choice}
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        void answerClarify(config, clarify.id, choice).then(() => setClarify(null));
+                      }}
+                    >
+                      {choice}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
             {approval && (
               <div className="mb-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">
                 <p className="text-sm font-medium">Hermes wants to run this</p>

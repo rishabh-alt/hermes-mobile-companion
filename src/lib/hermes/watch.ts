@@ -1,5 +1,6 @@
 import type { HermesConfig } from "./types";
 import { HermesError } from "./client";
+import { readEventStream } from "./event-stream";
 import { composeGatewayUrl } from "./profiles";
 
 export interface WatchFrame {
@@ -49,18 +50,8 @@ export async function followHostWatch(
   if (!response.ok || !response.body) {
     throw new HermesError("The host watch did not open.", response.status);
   }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (!signal.aborted) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      const parsed = parseWatchFrame(frame);
-      if (parsed) onFrame(parsed);
-    }
-  }
+  await readEventStream(response.body, (frame) => {
+    const parsed = parseWatchFrame(frame);
+    if (parsed) onFrame(parsed);
+  });
 }

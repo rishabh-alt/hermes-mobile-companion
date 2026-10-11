@@ -18,8 +18,10 @@ const config: CapacitorConfig = {
     backgroundColor: "#141414",
   },
   plugins: {
+    // Leave this off. A global patch buffers every fetch, so chat tokens arrive only after the turn ends.
+    // Check host calls CapacitorHttp.get itself. Chat and the live watch use normal fetch.
     CapacitorHttp: {
-      enabled: true,
+      enabled: false,
     },
   },
 };

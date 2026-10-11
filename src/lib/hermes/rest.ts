@@ -81,6 +81,7 @@ function list<T>(data: unknown, ...keys: string[]): T[] {
 export interface SessionInfo {
   id: string;
   title?: string;
+  preview?: string;
   model?: string;
   message_count?: number;
   updated_at?: string | number;
@@ -106,6 +107,7 @@ export interface GatewayMessage {
   created_at?: string | number;
   reasoning?: string;
   model?: string;
+  tool_name?: string;
 }
 
 export async function fetchSessionMessages(

@@ -1,5 +1,7 @@
 import { HermesError } from "./client";
 import { parseApprovalRequest } from "./approval";
+import { parseClarify } from "./clarify";
+import { readEventStream } from "./event-stream";
 import { api, type SessionInfo } from "./rest";
 import type { HermesConfig } from "./types";
 import { composeGatewayUrl } from "./profiles";
@@ -78,6 +80,8 @@ export interface SessionStreamHandlers {
   }) => void;
   onError: (message: string) => void;
   onApproval?: (request: import("./approval").ApprovalRequest) => void;
+  onRun?: (runId: string) => void;
+  onClarify?: (request: import("./clarify").ClarifyRequest) => void;
 }
 
 export async function streamGatewaySession({
@@ -135,9 +139,6 @@ export async function streamGatewaySession({
     throw new HermesError(`Gateway returned ${response.status}`, response.status);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let completed = false;
   const dispatch = (frame: string) => {
     const lines = frame.split("\n");
@@ -157,6 +158,7 @@ export async function streamGatewaySession({
     } catch {
       return;
     }
+    if (typeof payload["run_id"] === "string") handlers.onRun?.(payload["run_id"]);
     if (event === "assistant.delta" && typeof payload["delta"] === "string")
       handlers.onText(payload["delta"]);
     if (event === "assistant.completed") {
@@ -167,6 +169,10 @@ export async function streamGatewaySession({
         ...(runtime ? { runtime: runtime as { provider?: string; model?: string } } : {}),
       });
     }
+    if (event === "tool.started" && payload["tool_name"] === "clarify") {
+      const request = parseClarify(payload);
+      if (request) handlers.onClarify?.(request);
+    }
     if (event === "approval.request") {
       const request = parseApprovalRequest(payload);
       if (request) handlers.onApproval?.(request);
@@ -176,14 +182,6 @@ export async function streamGatewaySession({
         typeof payload["message"] === "string" ? payload["message"] : "Hermes stream failed.",
       );
   };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    frames.forEach(dispatch);
-  }
-  if (buffer.trim()) dispatch(buffer);
+  await readEventStream(response.body, dispatch);
   if (!completed) throw new HermesError("The stream ended before Hermes completed the turn.");
 }
