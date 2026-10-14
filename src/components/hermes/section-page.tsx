@@ -15,7 +15,7 @@ export function SectionPage({ title, icon: Icon, blurb, children }: Props) {
   const { configured } = useHermesConfig();
   return (
     <AppShell title={title}>
-      <div className="mx-auto w-full max-w-xl overflow-y-auto p-6 pb-20">
+      <div className="mx-auto h-full min-h-0 w-full max-w-xl overflow-y-auto p-6 pb-20">
         {children ?? (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <Icon className="h-8 w-8 text-muted-foreground" />

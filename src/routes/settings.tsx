@@ -132,7 +132,7 @@ function SettingsRoute() {
 
   return (
     <AppShell title="Settings" subtitle="Headless host console">
-      <div className="mx-auto w-full max-w-xl space-y-4 overflow-y-auto p-4 pb-16">
+      <div className="mx-auto h-full min-h-0 w-full max-w-xl space-y-4 overflow-y-auto p-4 pb-16">
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -354,7 +354,7 @@ function accessLabel(section: SettingsSection) {
   if (section.access === "phone") return "On this phone";
   if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
-  return "Host has not opened this";
+  return "Sign in to the dashboard";
 }
 
 function HostDoorPanel({

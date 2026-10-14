@@ -57,7 +57,7 @@ function ActivityRoute() {
 
   return (
     <AppShell title="Activity" subtitle="Read-only. Nothing here changes the host.">
-      <div className="safe-bottom space-y-4 overflow-y-auto px-4 py-4">
+      <div className="safe-bottom h-full min-h-0 space-y-4 overflow-y-auto px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             Work the host already recorded, including chats that did not start on this phone.

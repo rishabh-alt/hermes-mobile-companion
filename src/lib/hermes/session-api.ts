@@ -79,6 +79,8 @@ export interface SessionStreamHandlers {
     runtime?: { provider?: string; model?: string };
   }) => void;
   onError: (message: string) => void;
+  onReasoning?: (delta: string) => void;
+  onTool?: (tool: import("./types").ToolCall) => void;
   onApproval?: (request: import("./approval").ApprovalRequest) => void;
   onRun?: (runId: string) => void;
   onClarify?: (request: import("./clarify").ClarifyRequest) => void;
@@ -161,6 +163,28 @@ export async function streamGatewaySession({
     if (typeof payload["run_id"] === "string") handlers.onRun?.(payload["run_id"]);
     if (event === "assistant.delta" && typeof payload["delta"] === "string")
       handlers.onText(payload["delta"]);
+    if (event === "tool.progress" && payload["tool_name"] === "_thinking") {
+      const delta = typeof payload["delta"] === "string" ? payload["delta"] : "";
+      if (delta) handlers.onReasoning?.(delta);
+    }
+    if (event === "tool.started" || event === "tool.completed" || event === "tool.failed") {
+      const name = typeof payload["tool_name"] === "string" ? payload["tool_name"] : "tool";
+      if (name !== "_thinking") {
+        handlers.onTool?.({
+          id: typeof payload["message_id"] === "string" ? `${payload["message_id"]}-${name}` : name,
+          name,
+          input: payload["args"] ?? {},
+          rawInput: "",
+          output: typeof payload["preview"] === "string" ? payload["preview"] : undefined,
+          state:
+            event === "tool.failed"
+              ? "output-error"
+              : event === "tool.completed"
+                ? "output-available"
+                : "input-available",
+        });
+      }
+    }
     if (event === "assistant.completed") {
       completed = true;
       const runtime = payload["runtime"] as Record<string, unknown> | undefined;

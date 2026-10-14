@@ -152,7 +152,11 @@ export function settingsSections(features: {
         reason: "The model list can be read. Saving the host default needs the model admin door.",
       };
     }
-    return { ...section, access: "blocked", reason: `Missing door: ${section.id} write` };
+    return {
+      ...section,
+      access: "blocked",
+      reason: "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
+    };
   });
 }
 

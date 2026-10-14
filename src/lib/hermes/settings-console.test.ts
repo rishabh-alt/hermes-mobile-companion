@@ -12,7 +12,7 @@ describe("settingsSections", () => {
     expect(sections.find((section) => section.id === "appearance")?.access).toBe("phone");
     expect(sections.find((section) => section.id === "safety")?.access).toBe("blocked");
     expect(sections.find((section) => section.id === "safety")?.reason).toBe(
-      "Missing door: safety write",
+      "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
     );
   });
 
