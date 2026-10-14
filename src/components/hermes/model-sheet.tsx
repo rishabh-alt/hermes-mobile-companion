@@ -92,7 +92,7 @@ export function ModelSheet({
           <div>
             <p className="text-sm font-medium">Reasoning</p>
             <p className="text-[11px] text-muted-foreground">
-              How much Hermes thinks before answering.
+              How much Hermes thinks before answering. This does not change the Mac's main model.
             </p>
             <div className="mt-2 grid grid-cols-4 gap-1">
               {LEVELS.map((level) => {

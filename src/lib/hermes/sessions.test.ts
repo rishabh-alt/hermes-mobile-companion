@@ -52,4 +52,15 @@ describe("session cache", () => {
   it("rejects unsafe profile cache identities", () => {
     expect(() => activateSessionProfile("../default")).toThrow(/profile/i);
   });
+
+  it("does not move a chat to today just because it was opened", () => {
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+    vi.stubGlobal("CustomEvent", class {});
+    importGatewaySession("opened", "Opened chat", [], "grok");
+    const opened = readSessions()[0]?.updatedAt ?? 0;
+    importGatewaySession("opened", "Opened chat", [
+      { id: "m", role: "user", text: "hi", createdAt: 1 },
+    ]);
+    expect(readSessions()[0]?.updatedAt).toBe(opened);
+  });
 });

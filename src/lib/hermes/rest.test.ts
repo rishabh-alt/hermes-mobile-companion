@@ -10,6 +10,8 @@ const config = {
   provider: "",
   model: "",
   fallbackModel: "",
+  dashboardBaseUrl: "",
+  dashboardUsername: "",
   wsEnabled: false,
   haptics: false,
   reasoning: "medium" as const,

@@ -47,12 +47,8 @@ function ToolBlock({ call }: { call: ToolCall }) {
       : typeof call.output === "string"
         ? call.output
         : JSON.stringify(call.output, null, 2);
-  const summary = typeof call.output === "string" ? call.output : call.name;
   return (
     <div className="mb-2">
-      <p className="px-1 pb-1 text-xs text-muted-foreground">
-        {call.name}: {summary}
-      </p>
       <Tool className="border-border/70 bg-secondary/40" defaultOpen={false}>
         <ToolHeader
           type={`tool-${call.name}` as `tool-${string}`}

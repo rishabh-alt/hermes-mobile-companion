@@ -86,6 +86,7 @@ export interface SessionInfo {
   message_count?: number;
   updated_at?: string | number;
   created_at?: string | number;
+  last_active?: string | number;
   pinned?: boolean;
   source?: string;
 }
@@ -132,6 +133,13 @@ export function renameSession(config: HermesConfig, id: string, title: string) {
   return api<void>(config, `/api/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: { title },
+  });
+}
+
+export function pinSession(config: HermesConfig, id: string, pinned: boolean) {
+  return api<void>(config, `/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { pinned },
   });
 }
 

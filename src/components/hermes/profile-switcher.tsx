@@ -77,6 +77,11 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
           <span className="block truncate font-medium">
             {active?.label ?? config.activeProfile}
           </span>
+          {inventory.unavailable && (
+            <span className="block truncate text-[10px] text-muted-foreground">
+              This gateway has no profile list
+            </span>
+          )}
           {active?.model && (
             <span className="block truncate text-[10px] text-muted-foreground">{active.model}</span>
           )}

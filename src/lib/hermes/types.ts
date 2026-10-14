@@ -56,6 +56,8 @@ export interface HermesConfig {
   provider: string;
   model: string;
   fallbackModel: string;
+  dashboardBaseUrl: string;
+  dashboardUsername: string;
   wsEnabled: boolean;
   haptics: boolean;
   reasoning: ReasoningLevel;

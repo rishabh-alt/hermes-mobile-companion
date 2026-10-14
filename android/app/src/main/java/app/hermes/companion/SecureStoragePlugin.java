@@ -28,6 +28,8 @@ public class SecureStoragePlugin extends Plugin {
     private static final String PREFS = "hermes_secure_storage";
     private static final String TOKEN = "gateway_token";
     private static final String ADMIN_KEY = "model_admin_key";
+    private static final String DASHBOARD_PASSWORD = "dashboard_password";
+    private static final String DASHBOARD_COOKIE = "dashboard_cookie";
 
     private SharedPreferences preferences() {
         return getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -68,6 +70,26 @@ public class SecureStoragePlugin extends Plugin {
     @PluginMethod
     public void getAdminKey(PluginCall call) {
         read(call, ADMIN_KEY);
+    }
+
+    @PluginMethod
+    public void setSecret(PluginCall call) {
+        String name = call.getString("name", "");
+        if (!DASHBOARD_PASSWORD.equals(name) && !DASHBOARD_COOKIE.equals(name)) {
+            call.reject("Unknown secret");
+            return;
+        }
+        store(call, name);
+    }
+
+    @PluginMethod
+    public void getSecret(PluginCall call) {
+        String name = call.getString("name", "");
+        if (!DASHBOARD_PASSWORD.equals(name) && !DASHBOARD_COOKIE.equals(name)) {
+            call.reject("Unknown secret");
+            return;
+        }
+        read(call, name);
     }
 
     private void store(PluginCall call, String name) {

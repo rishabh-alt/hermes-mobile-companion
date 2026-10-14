@@ -772,7 +772,6 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           const runtime = await lockSessionRuntime(config, sessionId, { provider, model });
           if (!runtime.locked) throw new Error("Hermes did not lock that route for this session.");
           updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
-          update({ provider: runtime.provider, model: runtime.model });
         }}
         onUpdateConfig={(patch) => update(patch)}
       />

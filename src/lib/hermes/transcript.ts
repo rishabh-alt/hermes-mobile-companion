@@ -11,15 +11,17 @@ export function toolSummary(name: string, content: unknown): string {
   if (raw.startsWith("{")) {
     try {
       const data = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof data["output"] === "string")
+      if (typeof data["output"] === "string" && !data["output"].trim().startsWith("{"))
         return firstLine(data["output"]) || `${name} finished`;
       if (typeof data["content"] === "string") return `${name} read a file`;
-      if (data["success"] === true) return `${name} finished`;
+      if (typeof data["total_count"] === "number")
+        return `${name} · ${data["total_count"]} matches`;
+      return `${name} finished`;
     } catch {
       return `${name} finished`;
     }
   }
-  if (raw.startsWith("[")) return firstLine(raw) || `${name} finished`;
+  if (raw.startsWith("[")) return `${name} finished`;
   return firstLine(raw) || `${name} finished`;
 }
 
