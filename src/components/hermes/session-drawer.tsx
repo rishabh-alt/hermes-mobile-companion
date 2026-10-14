@@ -15,7 +15,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { haptic } from "@/lib/hermes/haptics";
@@ -69,6 +69,14 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [draft, setDraft] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") remote.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [remote.refresh]);
 
   const remoteRows = remote.data ?? [];
   const remoteIds = new Set(remoteRows.map((item) => item.id));

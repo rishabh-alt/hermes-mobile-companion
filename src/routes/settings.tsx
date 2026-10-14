@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/hermes/app-shell";
 import {
   Accordion,
@@ -17,8 +17,10 @@ import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { note } from "@/lib/hermes/debug-log";
 import { DashboardPanel } from "@/components/hermes/dashboard-panel";
+import { DashboardFields } from "@/components/hermes/dashboard-fields";
 import { saveHostSetting } from "@/lib/hermes/settings-door";
 import { nativeGet } from "@/lib/hermes/native-get";
+import { getDashboardCookie } from "@/lib/hermes/secure-storage";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -55,9 +57,15 @@ function SettingsRoute() {
   const [checking, setChecking] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
+  const [dashboardReady, setDashboardReady] = useState(false);
+  useEffect(() => {
+    void getDashboardCookie().then((cookie) => {
+      if (cookie) setDashboardReady(true);
+    });
+  }, []);
   const sections = useMemo(
-    () => searchSections(settingsSections(features), query),
-    [features, query],
+    () => searchSections(settingsSections(features, { dashboardSignedIn: dashboardReady }), query),
+    [features, query, dashboardReady],
   );
 
   const checkHost = async () => {
@@ -132,7 +140,7 @@ function SettingsRoute() {
 
   return (
     <AppShell title="Settings" subtitle="Headless host console">
-      <div className="mx-auto w-full max-w-xl space-y-4 overflow-y-auto p-4 pb-16">
+      <div className="mx-auto h-full min-h-0 w-full max-w-xl space-y-4 overflow-y-auto p-4 pb-16">
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -163,6 +171,7 @@ function SettingsRoute() {
                         checking={checking}
                         probes={probes}
                         onCheck={checkHost}
+                        onSignedIn={setDashboardReady}
                       />
                     )}
                     {section.id === "appearance" && (
@@ -194,10 +203,16 @@ function SettingsRoute() {
                         )}
                       </div>
                     )}
-                    {section.id === "model" && section.access === "write" && (
+                    {section.id === "model" && section.access === "write" && dashboardReady && (
+                      <DashboardPanel config={config} update={update} onSignedIn={setDashboardReady} />
+                    )}
+                    {section.id === "model" && section.access === "write" && !dashboardReady && (
                       <ModelAdminPanel config={config} update={update} />
                     )}
-                    {section.access === "write" && section.id !== "model" && (
+                    {section.access === "write" && section.id !== "model" && dashboardReady && (
+                      <DashboardFields baseUrl={config.dashboardBaseUrl} sectionId={section.id} />
+                    )}
+                    {section.access === "write" && section.id !== "model" && !dashboardReady && (
                       <HostDoorPanel config={config} sectionId={section.id} />
                     )}
                     {section.reason && (
@@ -223,12 +238,14 @@ function ConnectionFields({
   checking,
   probes,
   onCheck,
+  onSignedIn,
 }: {
   config: ReturnType<typeof useHermesConfig>["config"];
   update: ReturnType<typeof useHermesConfig>["update"];
   checking: boolean;
   probes: ProbeRow[];
   onCheck: () => void;
+  onSignedIn: (signedIn: boolean) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -276,7 +293,7 @@ function ConnectionFields({
           onCheckedChange={(value) => update({ wsEnabled: value })}
         />
       </div>
-      <DashboardPanel config={config} update={update} />
+      <DashboardPanel config={config} update={update} onSignedIn={onSignedIn} />
       <Button
         type="button"
         onClick={onCheck}
@@ -354,6 +371,9 @@ function accessLabel(section: SettingsSection) {
   if (section.access === "phone") return "On this phone";
   if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
+  if (section.access === "blocked") {
+    return section.reason?.startsWith("Signed in") ? "Signed in" : "Sign in to the dashboard";
+  }
   return "Host has not opened this";
 }
 

@@ -14,9 +14,11 @@ import type { HermesConfig } from "@/lib/hermes/types";
 export function DashboardPanel({
   config,
   update,
+  onSignedIn,
 }: {
   config: HermesConfig;
   update: (patch: Partial<HermesConfig>) => void;
+  onSignedIn?: (signedIn: boolean) => void;
 }) {
   const [password, setPassword] = useState("");
   const [provider, setProvider] = useState(config.provider);
@@ -43,6 +45,7 @@ export function DashboardPanel({
         setProvider(saved.provider);
         setModel(saved.model);
         setNote("Signed in. The password stays on this phone, not in the chat.");
+        onSignedIn?.(true);
         haptic("done");
         return;
       }

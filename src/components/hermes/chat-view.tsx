@@ -222,13 +222,44 @@ export function ChatView({ sessionId }: { sessionId: string }) {
     ).catch((err: unknown) => {
       if (controller.signal.aborted) return;
       if (err instanceof HermesError && err.status === 404) {
-        setWatchNote("Live updates start after the next gateway restart.");
+        setWatchNote(
+          "This gateway is not pushing live updates. Checking the Mac every few seconds.",
+        );
       }
     });
     return () => {
       controller.abort();
       profileRun.abort();
       profileRun.release();
+    };
+  }, [configured, config, sessionId, session?.title]);
+
+  useEffect(() => {
+    if (!configured) return;
+    const pullNow = () => {
+      if (document.hidden) return;
+      if (statusRef.current === "streaming" || statusRef.current === "submitted") return;
+      void pullSession(config, sessionId)
+        .then((messages) => {
+          importGatewaySession(
+            sessionId,
+            sessionLabel({
+              ...(session?.title ? { title: session.title } : {}),
+              messages,
+            }),
+            messages,
+          );
+        })
+        .catch(() => undefined);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") pullNow();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(pullNow, 8000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(timer);
     };
   }, [configured, config, sessionId, session?.title]);
 
@@ -375,8 +406,25 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               text += delta;
               push();
             },
+            onReasoning: (delta) => {
+              reasoning += delta;
+              push();
+            },
+            onTool: (tool) => {
+              const existing = tools.find((item) => item.id === tool.id);
+              tools = existing
+                ? tools.map((item) => (item.id === tool.id ? tool : item))
+                : [...tools, tool];
+              push();
+            },
             onCompleted: (event) => {
               if (event.content && !text) text = event.content;
+              const ran = event.runtime?.model;
+              if (ran && model && ran !== model) {
+                setWatchNote(
+                  `This turn ran ${ran}, not ${model}. The Mac did not take that switch.`,
+                );
+              }
               push();
             },
             onError: (message) => {
@@ -415,6 +463,26 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       } catch (err) {
         if (!isCurrentProfileRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
+        if (!aborted) {
+          try {
+            const recovered = await pullSession(config, sessionId, profileRun.signal);
+            if (!isCurrentProfileRun()) return;
+            if (recovered.length > history.length) {
+              importGatewaySession(
+                sessionId,
+                session?.title ?? "New chat",
+                recovered,
+                activeModel,
+                activeProvider,
+              );
+              setLive(null);
+              setStatus("idle");
+              return;
+            }
+          } catch {
+            // The host had nothing newer. Show the stream error below.
+          }
+        }
         const finished: HermesMessage = {
           ...assistant,
           text,

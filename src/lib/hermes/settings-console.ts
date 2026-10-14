@@ -117,12 +117,15 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   },
 ];
 
-export function settingsSections(features: {
-  admin_config_rw?: boolean;
-  model_options?: boolean;
-  model_admin?: boolean;
-  settings_admin?: boolean;
-}): SettingsSection[] {
+export function settingsSections(
+  features: {
+    admin_config_rw?: boolean;
+    model_options?: boolean;
+    model_admin?: boolean;
+    settings_admin?: boolean;
+  },
+  options: { dashboardSignedIn?: boolean } = {},
+): SettingsSection[] {
   const opened = new Set(
     features.settings_admin ? ["safety", "voice", "providers", "runtime"] : [],
   );
@@ -145,6 +148,13 @@ export function settingsSections(features: {
         reason: "Saves through the separate model admin key, not the chat token.",
       };
     }
+    if (section.kind === "model" && options.dashboardSignedIn) {
+      return {
+        ...section,
+        access: "write",
+        reason: "Signed in. This saves the Mac's main model through the dashboard.",
+      };
+    }
     if (section.kind === "model" && features.model_options) {
       return {
         ...section,
@@ -152,7 +162,18 @@ export function settingsSections(features: {
         reason: "The model list can be read. Saving the host default needs the model admin door.",
       };
     }
-    return { ...section, access: "blocked", reason: `Missing door: ${section.id} write` };
+    if (options.dashboardSignedIn) {
+      return {
+        ...section,
+        access: "write",
+        reason: "Saves through the dashboard.",
+      };
+    }
+    return {
+      ...section,
+      access: "blocked",
+      reason: "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
+    };
   });
 }
 
