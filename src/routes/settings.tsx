@@ -312,7 +312,14 @@ async function runProbe(
   try {
     const headers: Record<string, string> = {};
     if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
-    const response = await nativeGet(composeGatewayUrl(config, path), headers);
+    const response = await nativeGet(composeGatewayUrl(config, path), headers).catch(
+      async (err: unknown) => {
+        const message = err instanceof Error ? err.message : "native HTTP failed";
+        note(`${label} native ${message}`);
+        const fallback = await fetch(composeGatewayUrl(config, path), { headers });
+        return { status: fallback.status, data: await fallback.text() };
+      },
+    );
     const ok = response.status >= 200 && response.status < 300;
     const status = interpretProbe({ ok, status: response.status });
     let payload: unknown;
@@ -328,14 +335,15 @@ async function runProbe(
     const isTimeout =
       (err instanceof DOMException && err.name === "AbortError") ||
       (err instanceof Error && /timeout/i.test(err.message));
-    note(`${label} transport${isTimeout ? " timeout" : ""}`);
+    const message = err instanceof Error ? err.message : "The phone could not open the host.";
+    note(`${label} transport ${message}`);
     return {
       id,
       label,
       status: interpretProbe({ ok: false, transport: true }),
       ...(isTimeout
         ? { detail: "Timed out after 10 s — the phone may not be able to reach this host." }
-        : {}),
+        : { detail: message.slice(0, 180) }),
     };
   }
 }
