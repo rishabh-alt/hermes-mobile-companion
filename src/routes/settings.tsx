@@ -16,6 +16,7 @@ import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { note } from "@/lib/hermes/debug-log";
+import { DashboardPanel } from "@/components/hermes/dashboard-panel";
 import { saveHostSetting } from "@/lib/hermes/settings-door";
 import { nativeGet } from "@/lib/hermes/native-get";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
@@ -275,6 +276,7 @@ function ConnectionFields({
           onCheckedChange={(value) => update({ wsEnabled: value })}
         />
       </div>
+      <DashboardPanel config={config} update={update} />
       <Button
         type="button"
         onClick={onCheck}

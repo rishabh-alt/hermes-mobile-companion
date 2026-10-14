@@ -11,6 +11,8 @@ const config = {
   provider: "",
   model: "",
   fallbackModel: "",
+  dashboardBaseUrl: "",
+  dashboardUsername: "",
   wsEnabled: true,
   haptics: true,
   reasoning: "medium",

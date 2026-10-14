@@ -25,6 +25,8 @@ export const defaultConfig: HermesConfig = {
   provider: "",
   model: "",
   fallbackModel: "",
+  dashboardBaseUrl: "",
+  dashboardUsername: "",
   wsEnabled: true,
   haptics: true,
   reasoning: "medium",
