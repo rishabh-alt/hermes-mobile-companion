@@ -1,5 +1,5 @@
 import { Check, ChevronUp, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +15,11 @@ import { seedGatewaySessions } from "@/lib/hermes/sessions";
 import { writeConfig } from "@/lib/hermes/config";
 import { useGateway } from "@/lib/hermes/useGateway";
 import { listProfiles } from "@/lib/hermes/rest";
+import {
+  listDashboardProfiles,
+  setDashboardActiveProfile,
+  type DashboardProfileRow,
+} from "@/lib/hermes/dashboard";
 import type { ProfileRoute } from "@/lib/hermes/profiles";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -24,10 +29,38 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dashboardProfiles, setDashboardProfiles] = useState<DashboardProfileRow[]>([]);
   const navigate = useNavigate();
   const active =
     inventory.data?.find((profile) => profile.name === config.activeProfile) ??
-    inventory.data?.find((profile) => profile.isCurrent);
+    inventory.data?.find((profile) => profile.isCurrent) ??
+    dashboardProfiles.find((profile) => profile.name === config.activeProfile);
+
+  useEffect(() => {
+    if (!inventory.unavailable || !config.dashboardBaseUrl) return;
+    void listDashboardProfiles(config.dashboardBaseUrl)
+      .then((page) => setDashboardProfiles(page.profiles))
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "The dashboard has no profile list.");
+      });
+  }, [inventory.unavailable, config.dashboardBaseUrl]);
+
+  const selectDashboard = async (profile: DashboardProfileRow) => {
+    if (profile.name === config.activeProfile || switching) return;
+    setSwitching(profile.name);
+    setError(null);
+    try {
+      await setDashboardActiveProfile(config.dashboardBaseUrl, profile.name);
+      writeConfig({ ...config, activeProfile: profile.name });
+      haptic("done");
+      setError("Saved. Restart Hermes. The running chat gateway keeps the old profile until then.");
+    } catch (reason) {
+      haptic("error");
+      setError(reason instanceof Error ? reason.message : "Couldn't switch profile.");
+    } finally {
+      setSwitching(null);
+    }
+  };
 
   const select = async (profile: ProfileRoute) => {
     if (profile.name === config.activeProfile || switching) return;
@@ -77,7 +110,7 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
           <span className="block truncate font-medium">
             {active?.label ?? config.activeProfile}
           </span>
-          {inventory.unavailable && (
+          {inventory.unavailable && dashboardProfiles.length === 0 && (
             <span className="block truncate text-[10px] text-muted-foreground">
               This gateway has no profile list
             </span>
@@ -101,9 +134,9 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
             {inventory.loading && (
               <p className="px-3 py-4 text-sm text-muted-foreground">Loading profiles…</p>
             )}
-            {inventory.unavailable && (
+            {inventory.unavailable && dashboardProfiles.length === 0 && (
               <p role="status" className="px-3 py-4 text-sm text-muted-foreground">
-                Profile switching is unavailable on this gateway.
+                Sign in to the dashboard in Settings. The chat gateway has no profile list.
               </p>
             )}
             {inventory.error && (
@@ -111,6 +144,24 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
                 {inventory.error}
               </p>
             )}
+            {dashboardProfiles.map((profile) => (
+              <button
+                key={profile.name}
+                type="button"
+                disabled={Boolean(switching)}
+                onClick={() => void selectDashboard(profile)}
+                className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left hover:bg-accent disabled:opacity-60"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{profile.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {profile.name}
+                    {profile.model ? ` · ${profile.model}` : ""}
+                  </span>
+                </span>
+                {profile.name === config.activeProfile && <Check className="h-4 w-4 text-primary" />}
+              </button>
+            ))}
             {inventory.data?.map((profile) => (
               <button
                 key={profile.name}

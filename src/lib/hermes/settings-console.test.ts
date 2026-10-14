@@ -17,8 +17,8 @@ describe("settingsSections", () => {
     expect(
       settingsSections({ admin_config_rw: false }, { dashboardSignedIn: true }).find(
         (section) => section.id === "safety",
-      )?.reason,
-    ).toBe("Signed in. This section is not on the phone yet.");
+      )?.access,
+    ).toBe("write");
     expect(
       settingsSections({}, { dashboardSignedIn: true }).find((section) => section.id === "model")
         ?.reason,

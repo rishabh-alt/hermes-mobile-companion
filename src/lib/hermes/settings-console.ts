@@ -165,8 +165,8 @@ export function settingsSections(
     if (options.dashboardSignedIn) {
       return {
         ...section,
-        access: "blocked",
-        reason: "Signed in. This section is not on the phone yet.",
+        access: "write",
+        reason: "Saves through the dashboard.",
       };
     }
     return {

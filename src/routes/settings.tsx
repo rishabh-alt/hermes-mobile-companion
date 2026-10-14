@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/hermes/app-shell";
 import {
   Accordion,
@@ -17,8 +17,10 @@ import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
 import { note } from "@/lib/hermes/debug-log";
 import { DashboardPanel } from "@/components/hermes/dashboard-panel";
+import { DashboardFields } from "@/components/hermes/dashboard-fields";
 import { saveHostSetting } from "@/lib/hermes/settings-door";
 import { nativeGet } from "@/lib/hermes/native-get";
+import { getDashboardCookie } from "@/lib/hermes/secure-storage";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -56,6 +58,11 @@ function SettingsRoute() {
   const [models, setModels] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
   const [dashboardReady, setDashboardReady] = useState(false);
+  useEffect(() => {
+    void getDashboardCookie().then((cookie) => {
+      if (cookie) setDashboardReady(true);
+    });
+  }, []);
   const sections = useMemo(
     () => searchSections(settingsSections(features, { dashboardSignedIn: dashboardReady }), query),
     [features, query, dashboardReady],
@@ -202,7 +209,10 @@ function SettingsRoute() {
                     {section.id === "model" && section.access === "write" && !dashboardReady && (
                       <ModelAdminPanel config={config} update={update} />
                     )}
-                    {section.access === "write" && section.id !== "model" && (
+                    {section.access === "write" && section.id !== "model" && dashboardReady && (
+                      <DashboardFields baseUrl={config.dashboardBaseUrl} sectionId={section.id} />
+                    )}
+                    {section.access === "write" && section.id !== "model" && !dashboardReady && (
                       <HostDoorPanel config={config} sectionId={section.id} />
                     )}
                     {section.reason && (
