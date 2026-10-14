@@ -18,4 +18,10 @@ describe("tool transcript", () => {
   it("keeps a terminal result to one line", () => {
     expect(toolSummary("terminal", '{"output": "7 passed in 0.53s\\n"}')).toBe("7 passed in 0.53s");
   });
+
+  it("does not dump a search result into the chat", () => {
+    expect(
+      toolSummary("search_files", '{"total_count": 1, "matches": [{"path": "settings.ts"}]}'),
+    ).toBe("search_files · 1 matches");
+  });
 });

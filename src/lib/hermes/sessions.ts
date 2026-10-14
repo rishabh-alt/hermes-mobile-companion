@@ -66,6 +66,23 @@ export function updateSession(id: string, patch: Partial<Session>) {
   );
 }
 
+/** Pin state follows the host. Opening or pinning must not pretend the chat was just written. */
+export function setSessionPinned(id: string, pinned: boolean) {
+  mutateSessions((sessions) =>
+    sessions.map((session) => (session.id === id ? { ...session, pinned } : session)),
+  );
+}
+
+export function hostSessionTime(value: string | number | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value))
+    return value > 1e12 ? value : value * 1000;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
 export function setMessages(id: string, messages: HermesMessage[]) {
   mutateSessions((sessions) =>
     sessions.map((session) => {
@@ -146,7 +163,6 @@ export function importGatewaySession(
           messages,
           provider: provider ?? existing.provider,
           model: model ?? existing.model,
-          updatedAt: now,
         }
       : { id, title, pinned: false, createdAt: now, updatedAt: now, provider, model, messages };
     return [session, ...sessions.filter((candidate) => candidate.id !== id)];

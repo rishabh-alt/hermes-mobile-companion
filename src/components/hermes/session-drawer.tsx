@@ -22,7 +22,9 @@ import { haptic } from "@/lib/hermes/haptics";
 import {
   deleteSession,
   groupSessions,
+  hostSessionTime,
   importGatewaySession,
+  setSessionPinned,
   updateSession,
   useSessions,
 } from "@/lib/hermes/sessions";
@@ -33,6 +35,7 @@ import {
   deleteSession as deleteGatewaySession,
   listProfiles,
   listSessions,
+  pinSession,
   renameSession as renameGatewaySession,
 } from "@/lib/hermes/rest";
 import { createGatewaySession } from "@/lib/hermes/session-api";
@@ -67,20 +70,31 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => s.title.toLowerCase().includes(q));
-  }, [sessions, query]);
-
-  const { pinned, groups } = groupSessions(filtered);
-
-  const localIds = new Set(sessions.map((s) => s.id));
+  const remoteRows = remote.data ?? [];
+  const remoteIds = new Set(remoteRows.map((item) => item.id));
+  const counts = new Map(remoteRows.map((item) => [item.id, item.message_count ?? 0]));
   const q = query.trim().toLowerCase();
-  const remoteVisible = (remote.data ?? [])
-    .filter((s) => !localIds.has(s.id))
-    .filter((s) => !q || (s.title ?? "").toLowerCase().includes(q))
-    .slice(0, 30);
+  const matches = (label: string) => !q || label.toLowerCase().includes(q);
+  const listed = useMemo(() => {
+    const hostSessions: Session[] = remoteRows.map((item) => {
+      const local = sessions.find((session) => session.id === item.id);
+      const stamp = hostSessionTime(item.last_active ?? item.updated_at ?? item.created_at);
+      return {
+        id: item.id,
+        title: sessionLabel(item),
+        pinned: item.pinned === true,
+        createdAt: stamp || local?.createdAt || 0,
+        updatedAt: stamp || local?.updatedAt || 0,
+        ...(item.model || local?.model ? { model: item.model ?? local?.model } : {}),
+        messages: local?.messages ?? [],
+      };
+    });
+    const localOnly = sessions.filter((session) => !remoteIds.has(session.id));
+    return [...hostSessions, ...localOnly].filter((session) => matches(sessionLabel(session)));
+    // remoteRows is the gateway payload; sessions is the open-chat cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote.data, sessions, query]);
+  const { pinned, groups } = groupSessions(listed);
 
   const startNew = async () => {
     if (!configured) {
@@ -161,7 +175,9 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               </p>
               <p className="truncate pt-0.5 text-xs text-muted-foreground">
                 {session.model ? `${session.model.split("/").pop()} · ` : ""}
-                {session.messages.length} messages
+                {session.messages.length || counts.get(session.id)
+                  ? `${session.messages.length || counts.get(session.id)} messages`
+                  : ""}
               </p>
             </Link>
             <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-lg:opacity-60">
@@ -171,7 +187,18 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 aria-label={session.pinned ? "Unpin chat" : "Pin chat"}
                 onClick={() => {
                   haptic("tap");
-                  updateSession(session.id, { pinned: !session.pinned });
+                  const next = !session.pinned;
+                  void pinSession(config, session.id, next)
+                    .then(() => {
+                      setSessionPinned(session.id, next);
+                      setMutationError(null);
+                      remote.refresh();
+                    })
+                    .catch((err: unknown) => {
+                      setMutationError(
+                        err instanceof Error ? err.message : "The host did not pin that chat.",
+                      );
+                    });
                 }}
               >
                 {session.pinned ? <PinOff /> : <Pin />}
@@ -327,39 +354,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               </section>
             ))}
 
-            {!!remoteVisible.length && (
-              <section className="pt-3">
-                <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Gateway sessions
-                </p>
-                {remoteVisible.map((item) => (
-                  <Link
-                    key={item.id}
-                    to="/c/$sessionId"
-                    params={{ sessionId: item.id }}
-                    onClick={() => {
-                      haptic("tap");
-                      onNavigate?.();
-                    }}
-                    className="block rounded-lg px-3 py-2 hover:bg-sidebar-accent/60"
-                  >
-                    <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
-                      {sessionLabel(item)}
-                    </p>
-                    <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                      {[
-                        item.model?.split("/").pop(),
-                        item.message_count && `${item.message_count} messages`,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                  </Link>
-                ))}
-              </section>
-            )}
-
-            {!pinned.length && !groups.length && !remoteVisible.length && (
+            {!pinned.length && !groups.length && (
               <p className="px-3 py-6 text-sm text-muted-foreground">No sessions yet.</p>
             )}
           </>
