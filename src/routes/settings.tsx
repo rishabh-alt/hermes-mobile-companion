@@ -55,9 +55,10 @@ function SettingsRoute() {
   const [checking, setChecking] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
+  const [dashboardReady, setDashboardReady] = useState(false);
   const sections = useMemo(
-    () => searchSections(settingsSections(features), query),
-    [features, query],
+    () => searchSections(settingsSections(features, { dashboardSignedIn: dashboardReady }), query),
+    [features, query, dashboardReady],
   );
 
   const checkHost = async () => {
@@ -163,6 +164,7 @@ function SettingsRoute() {
                         checking={checking}
                         probes={probes}
                         onCheck={checkHost}
+                        onSignedIn={setDashboardReady}
                       />
                     )}
                     {section.id === "appearance" && (
@@ -194,7 +196,10 @@ function SettingsRoute() {
                         )}
                       </div>
                     )}
-                    {section.id === "model" && section.access === "write" && (
+                    {section.id === "model" && section.access === "write" && dashboardReady && (
+                      <DashboardPanel config={config} update={update} onSignedIn={setDashboardReady} />
+                    )}
+                    {section.id === "model" && section.access === "write" && !dashboardReady && (
                       <ModelAdminPanel config={config} update={update} />
                     )}
                     {section.access === "write" && section.id !== "model" && (
@@ -223,12 +228,14 @@ function ConnectionFields({
   checking,
   probes,
   onCheck,
+  onSignedIn,
 }: {
   config: ReturnType<typeof useHermesConfig>["config"];
   update: ReturnType<typeof useHermesConfig>["update"];
   checking: boolean;
   probes: ProbeRow[];
   onCheck: () => void;
+  onSignedIn: (signedIn: boolean) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -276,7 +283,7 @@ function ConnectionFields({
           onCheckedChange={(value) => update({ wsEnabled: value })}
         />
       </div>
-      <DashboardPanel config={config} update={update} />
+      <DashboardPanel config={config} update={update} onSignedIn={onSignedIn} />
       <Button
         type="button"
         onClick={onCheck}
@@ -354,7 +361,10 @@ function accessLabel(section: SettingsSection) {
   if (section.access === "phone") return "On this phone";
   if (section.access === "write") return "Can save on host";
   if (section.access === "read") return "Read from host";
-  return "Sign in to the dashboard";
+  if (section.access === "blocked") {
+    return section.reason?.startsWith("Signed in") ? "Signed in" : "Sign in to the dashboard";
+  }
+  return "Host has not opened this";
 }
 
 function HostDoorPanel({

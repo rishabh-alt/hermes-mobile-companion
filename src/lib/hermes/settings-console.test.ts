@@ -14,6 +14,15 @@ describe("settingsSections", () => {
     expect(sections.find((section) => section.id === "safety")?.reason).toBe(
       "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
     );
+    expect(
+      settingsSections({ admin_config_rw: false }, { dashboardSignedIn: true }).find(
+        (section) => section.id === "safety",
+      )?.reason,
+    ).toBe("Signed in. This section is not on the phone yet.");
+    expect(
+      settingsSections({}, { dashboardSignedIn: true }).find((section) => section.id === "model")
+        ?.reason,
+    ).toBe("Signed in. This saves the Mac's main model through the dashboard.");
   });
 
   it("opens safety only when the typed settings door is advertised", () => {
