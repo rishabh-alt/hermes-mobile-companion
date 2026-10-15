@@ -22,7 +22,7 @@ import { HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
-import { pullSession } from "@/lib/hermes/session-sync";
+import { mergePulledMessages, pullSession } from "@/lib/hermes/session-sync";
 import { sessionLabel } from "@/lib/hermes/session-title";
 import { respondToApproval, type ApprovalRequest } from "@/lib/hermes/approval";
 import { followHostWatch } from "@/lib/hermes/watch";
@@ -107,6 +107,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const activeProvider = session?.provider || config.provider;
   const activeModel = session?.model || config.model;
   const messages = useMemo(() => session?.messages ?? [], [session]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   useEffect(() => {
     if (!configured || (activeModel && activeProvider)) return;
@@ -207,13 +209,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         void pullSession(config, sessionId, profileRun.signal)
           .then((messages) => {
             if (generation !== pullGeneration.current || !profileRun.isCurrent()) return;
+            const shown = mergePulledMessages(messagesRef.current, messages);
             importGatewaySession(
               sessionId,
               sessionLabel({
                 ...(session?.title ? { title: session.title } : {}),
-                messages,
+                messages: shown,
               }),
-              messages,
+              shown,
             );
           })
           .catch(() => undefined);
@@ -241,13 +244,14 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       if (statusRef.current === "streaming" || statusRef.current === "submitted") return;
       void pullSession(config, sessionId)
         .then((messages) => {
+          const shown = mergePulledMessages(messagesRef.current, messages);
           importGatewaySession(
             sessionId,
             sessionLabel({
               ...(session?.title ? { title: session.title } : {}),
-              messages,
+              messages: shown,
             }),
-            messages,
+            shown,
           );
         })
         .catch(() => undefined);
@@ -441,7 +445,10 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       try {
         await start(activeModel);
         if (!isCurrentProfileRun()) return;
-        const canonical = await pullSession(config, sessionId, profileRun.signal);
+        const canonical = mergePulledMessages(
+          messagesRef.current,
+          await pullSession(config, sessionId, profileRun.signal),
+        );
         if (!isCurrentProfileRun()) return;
         importGatewaySession(
           sessionId,
@@ -465,7 +472,10 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         const aborted = (err as Error)?.name === "AbortError";
         if (!aborted) {
           try {
-            const recovered = await pullSession(config, sessionId, profileRun.signal);
+            const recovered = mergePulledMessages(
+              history,
+              await pullSession(config, sessionId, profileRun.signal),
+            );
             if (!isCurrentProfileRun()) return;
             if (recovered.length > history.length) {
               importGatewaySession(

@@ -119,7 +119,7 @@ export async function fetchSessionMessages(
 ) {
   const data = await api<unknown>(
     config,
-    `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}`,
+    `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}&order=latest`,
     signal ? { signal } : {},
   );
   return list<GatewayMessage>(data, "messages");
