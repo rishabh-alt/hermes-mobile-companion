@@ -838,7 +838,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         activeProvider={activeProvider}
         onSelect={async ({ provider, model }) => {
           const runtime = await lockSessionRuntime(config, sessionId, { provider, model });
-          if (!runtime.locked) throw new Error("Hermes did not lock that route for this session.");
+          if (!runtime.locked || runtime.model !== model || runtime.provider !== provider) {
+            throw new Error(
+              `The Mac kept ${runtime.model || "the current model"}. It did not switch to ${model}.`,
+            );
+          }
           updateSession(sessionId, { provider: runtime.provider, model: runtime.model });
         }}
         onUpdateConfig={(patch) => update(patch)}

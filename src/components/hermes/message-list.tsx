@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { haptic } from "@/lib/hermes/haptics";
+import { visibleChatText } from "@/lib/hermes/transcript";
 import type { HermesMessage, ToolCall } from "@/lib/hermes/types";
 import { cn } from "@/lib/utils";
 
@@ -143,9 +144,9 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
           ))}
           {message.text ? (
             isUser ? (
-              <p className="whitespace-pre-wrap break-words text-sm">{message.text}</p>
+              <p className="whitespace-pre-wrap break-words text-sm">{visibleChatText(message.text)}</p>
             ) : (
-              <MessageResponse>{message.text}</MessageResponse>
+              <MessageResponse>{visibleChatText(message.text)}</MessageResponse>
             )
           ) : live && !message.reasoning && !message.tools?.length ? (
             <Shimmer className="text-sm">Hermes is working…</Shimmer>
@@ -174,7 +175,7 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
                 size="icon-sm"
                 variant="ghost"
                 onClick={() => {
-                  navigator.clipboard?.writeText(message.text);
+                  navigator.clipboard?.writeText(visibleChatText(message.text));
                   haptic("done");
                   setShowActions(false);
                 }}
