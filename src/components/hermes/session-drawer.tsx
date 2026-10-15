@@ -68,6 +68,10 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({
+    "This week": true,
+    Earlier: true,
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -353,14 +357,31 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               )}
             </section>
 
-            {groups.map((group) => (
-              <section key={group.label} className="pt-3">
-                <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.label}
-                </p>
-                {group.items.map(row)}
-              </section>
-            ))}
+            {groups.map((group) => {
+              const closed = closedGroups[group.label] === true && !query.trim();
+              return (
+                <section key={group.label} className="pt-3">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between px-3 pb-1 text-left"
+                    onClick={() =>
+                      setClosedGroups((current) => ({
+                        ...current,
+                        [group.label]: !current[group.label],
+                      }))
+                    }
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {group.label}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {closed ? `${group.items.length} hidden` : "Hide"}
+                    </span>
+                  </button>
+                  {!closed && group.items.map(row)}
+                </section>
+              );
+            })}
 
             {!pinned.length && !groups.length && (
               <p className="px-3 py-6 text-sm text-muted-foreground">No sessions yet.</p>

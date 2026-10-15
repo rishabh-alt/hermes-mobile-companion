@@ -1,5 +1,6 @@
 import type { HermesConfig } from "./types";
 import { HermesError } from "./client";
+import { dashboardJson, dashboardUrlFromGateway } from "./dashboard";
 import { parseModelOptions, type ModelOptionsSnapshot } from "./model-options";
 import { composeGatewayUrl, parseProfileInventory } from "./profiles";
 
@@ -76,6 +77,38 @@ function list<T>(data: unknown, ...keys: string[]): T[] {
   return [];
 }
 
+function dashboardBase(config: HermesConfig) {
+  if (config.dashboardBaseUrl.trim()) return config.dashboardBaseUrl.trim();
+  try {
+    return dashboardUrlFromGateway(config.baseUrl);
+  } catch {
+    return "";
+  }
+}
+
+function gatewayMiss(err: unknown) {
+  return (
+    err instanceof HermesError &&
+    (err.status === 404 || err.status === undefined || /can't reach the gateway/i.test(err.message))
+  );
+}
+
+async function apiOrDashboard<T>(
+  config: HermesConfig,
+  path: string,
+  parse: (data: unknown) => T,
+  method: "GET" | "POST" | "PATCH" = "GET",
+  body?: unknown,
+): Promise<T> {
+  try {
+    return parse(await api(config, path, method === "GET" ? {} : { method, body }));
+  } catch (err) {
+    const base = dashboardBase(config);
+    if (!base || !gatewayMiss(err)) throw err;
+    return parse(await dashboardJson(base, path, method, body));
+  }
+}
+
 /* ---------------------------------------------------------------- sessions */
 
 export interface SessionInfo {
@@ -119,7 +152,7 @@ export async function fetchSessionMessages(
 ) {
   const data = await api<unknown>(
     config,
-    `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}`,
+    `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}&order=latest`,
     signal ? { signal } : {},
   );
   return list<GatewayMessage>(data, "messages");
@@ -155,8 +188,7 @@ export interface Skill {
 }
 
 export async function listSkills(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/skills");
-  return list<Skill>(data, "skills");
+  return apiOrDashboard(config, "/api/skills", (data) => list<Skill>(data, "skills"));
 }
 
 export function skillContent(config: HermesConfig, name: string) {
@@ -175,8 +207,7 @@ export interface McpServer {
 }
 
 export async function listMcpServers(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/mcp/servers");
-  return list<McpServer>(data, "servers");
+  return apiOrDashboard(config, "/api/mcp/servers", (data) => list<McpServer>(data, "servers"));
 }
 
 export function setMcpEnabled(config: HermesConfig, name: string, enabled: boolean) {
@@ -210,8 +241,9 @@ export async function listToolsets(config: HermesConfig) {
 /* ------------------------------------------------------------------- tools */
 
 export async function listTools(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/tools");
-  return list<{ name: string; description?: string; enabled?: boolean }>(data, "tools");
+  return apiOrDashboard(config, "/api/tools", (data) =>
+    list<{ name: string; description?: string; enabled?: boolean }>(data, "tools"),
+  );
 }
 
 /* ---------------------------------------------------------------- messaging */
@@ -226,8 +258,9 @@ export interface MessagingPlatform {
 }
 
 export async function listMessagingPlatforms(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/messaging/platforms");
-  return list<MessagingPlatform>(data, "platforms");
+  return apiOrDashboard(config, "/api/messaging/platforms", (data) =>
+    list<MessagingPlatform>(data, "platforms"),
+  );
 }
 
 export function testMessagingPlatform(config: HermesConfig, id: string) {
@@ -245,8 +278,7 @@ export interface Webhook {
 }
 
 export async function listWebhooks(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/webhooks");
-  return list<Webhook>(data, "webhooks");
+  return apiOrDashboard(config, "/api/webhooks", (data) => list<Webhook>(data, "webhooks"));
 }
 
 export function setWebhookEnabled(config: HermesConfig, name: string, enabled: boolean) {
@@ -271,8 +303,7 @@ export interface CronJob {
 }
 
 export async function listCronJobs(config: HermesConfig) {
-  const data = await api<unknown>(config, "/api/cron/jobs");
-  return list<CronJob>(data, "jobs");
+  return apiOrDashboard(config, "/api/cron/jobs", (data) => list<CronJob>(data, "jobs"));
 }
 
 export async function cronRuns(config: HermesConfig, jobId: string, limit = 20) {
@@ -291,9 +322,12 @@ export function cronAction(
   jobId: string,
   action: "pause" | "resume" | "trigger",
 ) {
-  return api<void>(config, `/api/cron/jobs/${encodeURIComponent(jobId)}/${action}`, {
-    method: "POST",
-  });
+  return apiOrDashboard(
+    config,
+    `/api/cron/jobs/${encodeURIComponent(jobId)}/${action}`,
+    () => undefined,
+    "POST",
+  );
 }
 
 /* ---------------------------------------------------------------- artifacts */
@@ -312,14 +346,17 @@ export interface Artifact {
 
 export async function listArtifacts(config: HermesConfig, kind?: string) {
   const q = kind && kind !== "all" ? `?kind=${encodeURIComponent(kind)}` : "";
-  const data = await api<unknown>(config, `/api/artifacts${q}`);
-  return list<Artifact>(data, "artifacts", "files", "images");
+  return apiOrDashboard(config, `/api/artifacts${q}`, (data) =>
+    list<Artifact>(data, "artifacts", "files", "images"),
+  );
 }
 
 /* ------------------------------------------------------------------ kanban */
 
 export async function kanbanBoard(config: HermesConfig) {
-  return api<Record<string, unknown>>(config, "/api/plugins/kanban/board");
+  return apiOrDashboard(config, "/api/plugins/kanban/board", (data) =>
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {},
+  );
 }
 
 /* ---------------------------------------------------------------- profiles */

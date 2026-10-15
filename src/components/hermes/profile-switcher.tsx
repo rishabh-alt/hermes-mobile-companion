@@ -16,6 +16,7 @@ import { writeConfig } from "@/lib/hermes/config";
 import { useGateway } from "@/lib/hermes/useGateway";
 import { listProfiles } from "@/lib/hermes/rest";
 import {
+  dashboardUrlFromGateway,
   listDashboardProfiles,
   setDashboardActiveProfile,
   type DashboardProfileRow,
@@ -37,20 +38,43 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
     dashboardProfiles.find((profile) => profile.name === config.activeProfile);
 
   useEffect(() => {
-    if (!inventory.unavailable || !config.dashboardBaseUrl) return;
-    void listDashboardProfiles(config.dashboardBaseUrl)
+    const gatewayMiss =
+      !inventory.loading &&
+      (inventory.unavailable || Boolean(inventory.error) || !inventory.data?.length);
+    if (!gatewayMiss) return;
+    const base =
+      config.dashboardBaseUrl ||
+      (() => {
+        try {
+          return dashboardUrlFromGateway(config.baseUrl);
+        } catch {
+          return "";
+        }
+      })();
+    if (!base) return;
+    void listDashboardProfiles(base)
       .then((page) => setDashboardProfiles(page.profiles))
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : "The dashboard has no profile list.");
       });
-  }, [inventory.unavailable, config.dashboardBaseUrl]);
+  }, [
+    inventory.loading,
+    inventory.unavailable,
+    inventory.error,
+    inventory.data,
+    config.dashboardBaseUrl,
+    config.baseUrl,
+  ]);
 
   const selectDashboard = async (profile: DashboardProfileRow) => {
     if (profile.name === config.activeProfile || switching) return;
     setSwitching(profile.name);
     setError(null);
     try {
-      await setDashboardActiveProfile(config.dashboardBaseUrl, profile.name);
+      await setDashboardActiveProfile(
+        config.dashboardBaseUrl || dashboardUrlFromGateway(config.baseUrl),
+        profile.name,
+      );
       writeConfig({ ...config, activeProfile: profile.name });
       haptic("done");
       setError("Saved. Restart Hermes. The running chat gateway keeps the old profile until then.");
@@ -126,8 +150,8 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
           <DialogHeader>
             <DialogTitle>Switch profile</DialogTitle>
             <DialogDescription>
-              Profiles are supplied by your Hermes gateway. Switching reloads sessions and model
-              settings.
+              The chat gateway has no live profile list. A pick is saved for the next Hermes start.
+              It does not move this chat until you restart Hermes.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1">
@@ -139,7 +163,7 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
                 Sign in to the dashboard in Settings. The chat gateway has no profile list.
               </p>
             )}
-            {inventory.error && (
+            {inventory.error && dashboardProfiles.length === 0 && (
               <p role="alert" className="px-3 py-4 text-sm text-destructive">
                 {inventory.error}
               </p>
@@ -159,7 +183,9 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
                     {profile.model ? ` · ${profile.model}` : ""}
                   </span>
                 </span>
-                {profile.name === config.activeProfile && <Check className="h-4 w-4 text-primary" />}
+                {profile.name === config.activeProfile && (
+                  <Check className="h-4 w-4 text-primary" />
+                )}
               </button>
             ))}
             {inventory.data?.map((profile) => (

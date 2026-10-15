@@ -204,7 +204,11 @@ function SettingsRoute() {
                       </div>
                     )}
                     {section.id === "model" && section.access === "write" && dashboardReady && (
-                      <DashboardPanel config={config} update={update} onSignedIn={setDashboardReady} />
+                      <DashboardPanel
+                        config={config}
+                        update={update}
+                        onSignedIn={setDashboardReady}
+                      />
                     )}
                     {section.id === "model" && section.access === "write" && !dashboardReady && (
                       <ModelAdminPanel config={config} update={update} />

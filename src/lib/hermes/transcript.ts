@@ -26,20 +26,32 @@ export function toolSummary(name: string, content: unknown): string {
 }
 
 function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return visibleChatText(content);
   if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        const item = (part ?? {}) as Record<string, unknown>;
-        return typeof item["text"] === "string" ? item["text"] : "";
-      })
-      .join("");
+    return visibleChatText(
+      content
+        .map((part) => {
+          const item = (part ?? {}) as Record<string, unknown>;
+          return typeof item["text"] === "string" ? item["text"] : "";
+        })
+        .join(""),
+    );
   }
   if (content && typeof content === "object") {
     const item = content as Record<string, unknown>;
-    if (typeof item["text"] === "string") return item["text"];
+    if (typeof item["text"] === "string") return visibleChatText(item["text"]);
   }
   return "";
+}
+
+/** Host notes injected for the model must not appear in the phone bubble. */
+export function visibleChatText(text: string): string {
+  return text
+    .replace(/<memory-context>[\s\S]*?<\/memory-context>/gi, "")
+    .replace(/<memory-context>[\s\S]*$/gi, "")
+    .replace(/\n*\[System note: The following is recalled memory context[\s\S]*$/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function toHermesMessage(raw: GatewayMessage, index: number): HermesMessage {

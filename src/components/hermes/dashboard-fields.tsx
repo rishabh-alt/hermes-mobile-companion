@@ -13,13 +13,7 @@ function shown(value: unknown) {
   return typeof value === "string" ? value : String(value);
 }
 
-export function DashboardFields({
-  baseUrl,
-  sectionId,
-}: {
-  baseUrl: string;
-  sectionId: string;
-}) {
+export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; sectionId: string }) {
   const [fields, setFields] = useState<DashboardField[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
@@ -35,7 +29,8 @@ export function DashboardFields({
         if (rows.length === 0) setNote("This section has no simple fields on the Mac.");
       })
       .catch((err: unknown) => {
-        if (!cancelled) setNote(err instanceof Error ? err.message : "The dashboard refused this section.");
+        if (!cancelled)
+          setNote(err instanceof Error ? err.message : "The dashboard refused this section.");
       });
     return () => {
       cancelled = true;
@@ -68,7 +63,9 @@ export function DashboardFields({
               checked={field.value === true}
               disabled={busy === field.key}
               onCheckedChange={(value) => {
-                setFields((rows) => rows.map((row) => (row.key === field.key ? { ...row, value } : row)));
+                setFields((rows) =>
+                  rows.map((row) => (row.key === field.key ? { ...row, value } : row)),
+                );
                 void save(field, value);
               }}
             />
@@ -79,7 +76,9 @@ export function DashboardFields({
               disabled={busy === field.key}
               onChange={(event) => {
                 const value = event.target.value;
-                setFields((rows) => rows.map((row) => (row.key === field.key ? { ...row, value } : row)));
+                setFields((rows) =>
+                  rows.map((row) => (row.key === field.key ? { ...row, value } : row)),
+                );
                 void save(field, value);
               }}
             >
