@@ -144,7 +144,9 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
           ))}
           {message.text ? (
             isUser ? (
-              <p className="whitespace-pre-wrap break-words text-sm">{visibleChatText(message.text)}</p>
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {visibleChatText(message.text)}
+              </p>
             ) : (
               <MessageResponse>{visibleChatText(message.text)}</MessageResponse>
             )

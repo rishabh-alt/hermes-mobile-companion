@@ -8,13 +8,19 @@ function message(role: HermesMessage["role"], text: string): HermesMessage {
 
 describe("mergePulledMessages", () => {
   it("keeps the turn on screen when the host page is behind", () => {
-    const local = [message("user", "it shows me you replied"), message("assistant", "The refresh deleted it.")];
+    const local = [
+      message("user", "it shows me you replied"),
+      message("assistant", "The refresh deleted it."),
+    ];
     const pulled = [message("user", "older")];
     expect(mergePulledMessages(local, pulled)).toBe(local);
   });
 
   it("keeps a reply the host page has not stored yet", () => {
-    const local = [message("user", "it shows me you replied"), message("assistant", "The refresh deleted it.")];
+    const local = [
+      message("user", "it shows me you replied"),
+      message("assistant", "The refresh deleted it."),
+    ];
     const pulled = [message("user", "it shows me you replied")];
     expect(mergePulledMessages(local, pulled)).toBe(local);
   });

@@ -57,7 +57,14 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : "The dashboard has no profile list.");
       });
-  }, [inventory.loading, inventory.unavailable, inventory.error, inventory.data, config.dashboardBaseUrl, config.baseUrl]);
+  }, [
+    inventory.loading,
+    inventory.unavailable,
+    inventory.error,
+    inventory.data,
+    config.dashboardBaseUrl,
+    config.baseUrl,
+  ]);
 
   const selectDashboard = async (profile: DashboardProfileRow) => {
     if (profile.name === config.activeProfile || switching) return;
@@ -176,7 +183,9 @@ export function ProfileSwitcher({ onNavigate }: { onNavigate?: (() => void) | un
                     {profile.model ? ` · ${profile.model}` : ""}
                   </span>
                 </span>
-                {profile.name === config.activeProfile && <Check className="h-4 w-4 text-primary" />}
+                {profile.name === config.activeProfile && (
+                  <Check className="h-4 w-4 text-primary" />
+                )}
               </button>
             ))}
             {inventory.data?.map((profile) => (

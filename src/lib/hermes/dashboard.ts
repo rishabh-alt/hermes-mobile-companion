@@ -191,12 +191,14 @@ export async function listDashboardProfiles(baseUrl: string): Promise<{
       const item = row as Record<string, unknown>;
       const name = String(item["name"] ?? "").trim();
       if (!name) return [];
-      return [{
-        name,
-        label: String(item["alias"] || item["description"] || name),
-        model: String(item["model"] ?? ""),
-        isDefault: item["is_default"] === true,
-      }];
+      return [
+        {
+          name,
+          label: String(item["alias"] || item["description"] || name),
+          model: String(item["model"] ?? ""),
+          isDefault: item["is_default"] === true,
+        },
+      ];
     }),
   };
 }
@@ -252,7 +254,10 @@ function nestValue(key: string, value: unknown): Record<string, unknown> {
   return root;
 }
 
-export async function readDashboardSection(baseUrl: string, sectionId: string): Promise<DashboardField[]> {
+export async function readDashboardSection(
+  baseUrl: string,
+  sectionId: string,
+): Promise<DashboardField[]> {
   const categories = new Set(SECTION_CATEGORIES[sectionId] ?? []);
   const [schema, saved] = await Promise.all([
     dashboardRequest(baseUrl, "/api/config/schema", "GET"),
@@ -268,30 +273,29 @@ export async function readDashboardSection(baseUrl: string, sectionId: string): 
   const savedBody = JSON.parse(saved.text) as Record<string, unknown>;
   const rawFields = schemaBody["fields"];
   const fields =
-    rawFields && typeof rawFields === "object"
-      ? (rawFields as Record<string, unknown>)
-      : {};
+    rawFields && typeof rawFields === "object" ? (rawFields as Record<string, unknown>) : {};
   const rawConfig = savedBody["config"];
   const values =
-    rawConfig && typeof rawConfig === "object"
-      ? (rawConfig as Record<string, unknown>)
-      : {};
+    rawConfig && typeof rawConfig === "object" ? (rawConfig as Record<string, unknown>) : {};
   return Object.entries(fields)
     .flatMap(([key, raw]) => {
       if (!raw || typeof raw !== "object") return [];
       const field = raw as Record<string, unknown>;
       if (!categories.has(String(field["category"] ?? ""))) return [];
       const type = String(field["type"] ?? "");
-      if (type !== "string" && type !== "number" && type !== "boolean" && type !== "select") return [];
+      if (type !== "string" && type !== "number" && type !== "boolean" && type !== "select")
+        return [];
       if (/api_key|token|secret|password/i.test(key)) return [];
       const options = field["options"];
-      return [{
-        key,
-        type: type as DashboardField["type"],
-        description: String(field["description"] ?? ""),
-        options: Array.isArray(options) ? options.map(String) : [],
-        value: valueAt(values, key),
-      }];
+      return [
+        {
+          key,
+          type: type as DashboardField["type"],
+          description: String(field["description"] ?? ""),
+          options: Array.isArray(options) ? options.map(String) : [],
+          value: valueAt(values, key),
+        },
+      ];
     })
     .slice(0, 40);
 }
