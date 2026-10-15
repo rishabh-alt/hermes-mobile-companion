@@ -41,7 +41,7 @@ function isRedacted(value: string) {
 async function dashboardRequest(
   base: string,
   path: string,
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST" | "PUT" | "PATCH",
   body?: unknown,
 ) {
   const url = `${normalizeDashboardUrl(base)}${path}`;
@@ -65,6 +65,21 @@ async function dashboardRequest(
   const text =
     typeof response.data === "string" ? response.data : JSON.stringify(response.data ?? "");
   return { status: response.status, text };
+}
+
+export async function dashboardJson(
+  baseUrl: string,
+  path: string,
+  method: "GET" | "POST" | "PUT" | "PATCH" = "GET",
+  body?: unknown,
+) {
+  const response = await dashboardRequest(baseUrl, path, method, body);
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard in Settings.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The dashboard did not open that page.", response.status);
+  }
+  if (!response.text.trim()) return null;
+  return JSON.parse(response.text) as unknown;
 }
 
 export async function signInToDashboard(input: {
