@@ -2,6 +2,18 @@ import { HermesError } from "./client";
 import { composeGatewayUrl } from "./profiles";
 import type { HermesConfig } from "./types";
 
+export async function stopRun(config: HermesConfig, runId: string) {
+  const headers: Record<string, string> = {};
+  if (config.token.trim()) headers["Authorization"] = `Bearer ${config.token.trim()}`;
+  const response = await fetch(
+    composeGatewayUrl(config, `/v1/runs/${encodeURIComponent(runId)}/stop`),
+    { method: "POST", headers },
+  );
+  if (!response.ok && response.status !== 409) {
+    throw new HermesError("The host did not stop that turn.", response.status);
+  }
+}
+
 export async function steerRun(config: HermesConfig, runId: string, text: string) {
   const body = text.trim();
   if (!body) throw new HermesError("Steer text is empty.");

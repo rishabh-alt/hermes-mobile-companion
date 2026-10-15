@@ -29,7 +29,7 @@ import { followHostWatch } from "@/lib/hermes/watch";
 import { isMissing, fetchModelOptions } from "@/lib/hermes/rest";
 import { lockSessionRuntime, streamGatewaySession } from "@/lib/hermes/session-api";
 import { answerClarify, type ClarifyRequest } from "@/lib/hermes/clarify";
-import { steerRun, transcriptText } from "@/lib/hermes/steer";
+import { steerRun, stopRun, transcriptText } from "@/lib/hermes/steer";
 import { normalizePromptEvent } from "@/lib/hermes/rpc";
 import { createRunGuard, profileRunBoundary } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
@@ -98,6 +98,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [clarify, setClarify] = useState<ClarifyRequest | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const runIdRef = useRef<string | null>(null);
   const [steerText, setSteerText] = useState("");
   const [steerNote, setSteerNote] = useState<string | null>(null);
   const [queued, setQueued] = useState<string | null>(null);
@@ -436,7 +437,10 @@ export function ChatView({ sessionId }: { sessionId: string }) {
             },
             onApproval: (request) => setApproval(request),
             onClarify: (request) => setClarify(request),
-            onRun: (id) => setRunId(id),
+            onRun: (id) => {
+              runIdRef.current = id;
+              setRunId(id);
+            },
           },
         });
       };
@@ -459,6 +463,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         );
         setStatus("idle");
         setRunId(null);
+        runIdRef.current = null;
         haptic("done");
         if (document.hidden && "Notification" in window) {
           if (Notification.permission === "granted") {
@@ -470,43 +475,34 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       } catch (err) {
         if (!isCurrentProfileRun()) return;
         const aborted = (err as Error)?.name === "AbortError";
-        if (!aborted) {
-          try {
-            const recovered = mergePulledMessages(
-              history,
-              await pullSession(config, sessionId, profileRun.signal),
-            );
-            if (!isCurrentProfileRun()) return;
-            if (recovered.length > history.length) {
-              importGatewaySession(
-                sessionId,
-                session?.title ?? "New chat",
-                recovered,
-                activeModel,
-                activeProvider,
-              );
-              setLive(null);
-              setStatus("idle");
-              return;
-            }
-          } catch {
-            // The host had nothing newer. Show the stream error below.
-          }
+        if (aborted) {
+          setStatus("idle");
+          return;
         }
-        const finished: HermesMessage = {
-          ...assistant,
-          text,
-          reasoning: reasoning || undefined,
-          tools: tools.length ? tools : undefined,
-          error: aborted
-            ? undefined
-            : err instanceof HermesError
-              ? err.message
-              : ((err as Error)?.message ?? "Something went wrong"),
-        };
-        setMessages(sessionId, [...history, finished]);
-        setStatus(aborted ? "idle" : "error");
-        if (!aborted) haptic("error");
+        try {
+          const recovered = mergePulledMessages(
+            history,
+            await pullSession(config, sessionId, profileRun.signal),
+          );
+          if (!isCurrentProfileRun()) return;
+          const last = recovered[recovered.length - 1];
+          if (last?.role === "assistant" && last.text.trim()) {
+            importGatewaySession(
+              sessionId,
+              session?.title ?? "New chat",
+              recovered,
+              activeModel,
+              activeProvider,
+            );
+            setLive(null);
+            setStatus("idle");
+            return;
+          }
+        } catch {
+          // The next poll will try again.
+        }
+        setWatchNote("The phone dropped the stream. Waiting for the Mac to finish this turn.");
+        setStatus("idle");
       } finally {
         if (isCurrentProfileRun()) {
           setLive(null);
@@ -797,6 +793,8 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                   disabled={!configured || Boolean(pullError)}
                   onStop={() => {
                     haptic("error");
+                    const id = runIdRef.current;
+                    if (id) void stopRun(config, id).catch(() => undefined);
                     abortRef.current?.abort();
                   }}
                 />
