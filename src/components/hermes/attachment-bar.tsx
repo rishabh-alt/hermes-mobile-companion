@@ -1,9 +1,41 @@
-import { Paperclip, X } from "lucide-react";
+import { Camera, Paperclip, X } from "lucide-react";
+import { useRef } from "react";
 import {
   PromptInputButton,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import { haptic } from "@/lib/hermes/haptics";
+
+export function AttachmentCameraButton() {
+  const attachments = usePromptInputAttachments();
+  const cameraRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <>
+      <PromptInputButton
+        aria-label="Take a photo"
+        onClick={() => {
+          haptic("tap");
+          cameraRef.current?.click();
+        }}
+      >
+        <Camera />
+      </PromptInputButton>
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(event) => {
+          if (event.target.files && event.target.files.length > 0) {
+            attachments.add(event.target.files);
+          }
+          event.target.value = "";
+        }}
+      />
+    </>
+  );
+}
 
 export function AttachmentAddButton() {
   const attachments = usePromptInputAttachments();

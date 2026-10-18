@@ -123,58 +123,61 @@ export function settingsSections(
     model_options?: boolean;
     model_admin?: boolean;
     settings_admin?: boolean;
+    billing?: boolean;
   },
   options: { dashboardSignedIn?: boolean } = {},
 ): SettingsSection[] {
   const opened = new Set(
     features.settings_admin ? ["safety", "voice", "providers", "runtime"] : [],
   );
-  return CATALOG.map((section) => {
-    if (section.kind === "phone") return { ...section, access: "phone" };
-    if (opened.has(section.id)) {
+  return CATALOG.filter((section) => section.id !== "billing" || features.billing === true).map(
+    (section) => {
+      if (section.kind === "phone") return { ...section, access: "phone" };
+      if (opened.has(section.id)) {
+        return {
+          ...section,
+          access: "write",
+          reason:
+            section.id === "providers"
+              ? "Provider keys are write-only. The phone does not keep them."
+              : "Saves through the admin key, not the chat token.",
+        };
+      }
+      if (section.kind === "model" && features.model_admin) {
+        return {
+          ...section,
+          access: "write",
+          reason: "Saves through the separate model admin key, not the chat token.",
+        };
+      }
+      if (section.kind === "model" && options.dashboardSignedIn) {
+        return {
+          ...section,
+          access: "write",
+          reason: "Signed in. This saves the Mac's main model through the dashboard.",
+        };
+      }
+      if (section.kind === "model" && features.model_options) {
+        return {
+          ...section,
+          access: "read",
+          reason: "The model list can be read. Saving the host default needs the model admin door.",
+        };
+      }
+      if (options.dashboardSignedIn) {
+        return {
+          ...section,
+          access: "write",
+          reason: "Saves through the dashboard.",
+        };
+      }
       return {
         ...section,
-        access: "write",
-        reason:
-          section.id === "providers"
-            ? "Provider keys are write-only. The phone does not keep them."
-            : "Saves through the admin key, not the chat token.",
+        access: "blocked",
+        reason: "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
       };
-    }
-    if (section.kind === "model" && features.model_admin) {
-      return {
-        ...section,
-        access: "write",
-        reason: "Saves through the separate model admin key, not the chat token.",
-      };
-    }
-    if (section.kind === "model" && options.dashboardSignedIn) {
-      return {
-        ...section,
-        access: "write",
-        reason: "Signed in. This saves the Mac's main model through the dashboard.",
-      };
-    }
-    if (section.kind === "model" && features.model_options) {
-      return {
-        ...section,
-        access: "read",
-        reason: "The model list can be read. Saving the host default needs the model admin door.",
-      };
-    }
-    if (options.dashboardSignedIn) {
-      return {
-        ...section,
-        access: "write",
-        reason: "Saves through the dashboard.",
-      };
-    }
-    return {
-      ...section,
-      access: "blocked",
-      reason: "Sign in to the dashboard in Connection. The chat gateway does not have this door.",
-    };
-  });
+    },
+  );
 }
 
 export function searchSections(sections: SettingsSection[], query: string) {

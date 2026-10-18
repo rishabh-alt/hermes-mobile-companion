@@ -1,5 +1,7 @@
 import type { HermesConfig } from "./types";
 import { HermesError } from "./client";
+import { parseApprovalRequest, type ApprovalRequest } from "./approval";
+import { parseClarify, type ClarifyRequest } from "./clarify";
 import { dashboardJson, dashboardUrlFromGateway } from "./dashboard";
 import { parseModelOptions, type ModelOptionsSnapshot } from "./model-options";
 import { composeGatewayUrl, parseProfileInventory } from "./profiles";
@@ -97,7 +99,7 @@ async function apiOrDashboard<T>(
   config: HermesConfig,
   path: string,
   parse: (data: unknown) => T,
-  method: "GET" | "POST" | "PATCH" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: unknown,
 ): Promise<T> {
   try {
@@ -176,6 +178,51 @@ export function pinSession(config: HermesConfig, id: string, pinned: boolean) {
   });
 }
 
+export async function fetchActiveSessionPrompts(
+  config: HermesConfig,
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ approval: ApprovalRequest | null; clarify: ClarifyRequest | null }> {
+  try {
+    const data = await api<unknown>(
+      config,
+      `/api/sessions/${encodeURIComponent(id)}`,
+      signal ? { signal } : {},
+    );
+    const root = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+    const session =
+      root["session"] && typeof root["session"] === "object"
+        ? (root["session"] as Record<string, unknown>)
+        : root;
+    const activeRun =
+      session["active_run"] && typeof session["active_run"] === "object"
+        ? (session["active_run"] as Record<string, unknown>)
+        : session;
+    const isRunning =
+      session["status"] === "running" ||
+      session["status"] === "waiting" ||
+      activeRun["status"] === "running" ||
+      activeRun["status"] === "waiting" ||
+      Boolean(session["pending_approval"] || session["pending_clarify"]) ||
+      Boolean(activeRun["pending_approval"] || activeRun["pending_clarify"]);
+    if (!isRunning) return { approval: null, clarify: null };
+    const rawApproval = activeRun["pending_approval"] ?? session["pending_approval"];
+    const rawClarify = activeRun["pending_clarify"] ?? session["pending_clarify"];
+    return {
+      approval:
+        rawApproval && typeof rawApproval === "object"
+          ? parseApprovalRequest(rawApproval as Record<string, unknown>)
+          : null,
+      clarify:
+        rawClarify && typeof rawClarify === "object"
+          ? parseClarify(rawClarify as Record<string, unknown>)
+          : null,
+    };
+  } catch {
+    return { approval: null, clarify: null };
+  }
+}
+
 /* ------------------------------------------------------------------ skills */
 
 export interface Skill {
@@ -192,7 +239,11 @@ export async function listSkills(config: HermesConfig) {
 }
 
 export function skillContent(config: HermesConfig, name: string) {
-  return api<{ content?: string }>(config, `/api/skills/content?name=${encodeURIComponent(name)}`);
+  return apiOrDashboard(config, `/api/skills/content?name=${encodeURIComponent(name)}`, (data) =>
+    data && typeof data === "object"
+      ? (data as { content?: string; markdown?: string })
+      : { content: typeof data === "string" ? data : "" },
+  );
 }
 
 /* --------------------------------------------------------------------- mcp */
@@ -211,16 +262,22 @@ export async function listMcpServers(config: HermesConfig) {
 }
 
 export function setMcpEnabled(config: HermesConfig, name: string, enabled: boolean) {
-  return api<void>(config, `/api/mcp/servers/${encodeURIComponent(name)}/enabled`, {
-    method: "POST",
-    body: { enabled },
-  });
+  return apiOrDashboard(
+    config,
+    `/api/mcp/servers/${encodeURIComponent(name)}/enabled`,
+    () => undefined,
+    "POST",
+    { enabled },
+  );
 }
 
 export function testMcpServer(config: HermesConfig, name: string) {
-  return api<Record<string, unknown>>(config, `/api/mcp/servers/${encodeURIComponent(name)}/test`, {
-    method: "POST",
-  });
+  return apiOrDashboard(
+    config,
+    `/api/mcp/servers/${encodeURIComponent(name)}/test`,
+    (data) => (data && typeof data === "object" ? (data as Record<string, unknown>) : {}),
+    "POST",
+  );
 }
 
 /* ---------------------------------------------------------------- toolsets */
@@ -264,10 +321,11 @@ export async function listMessagingPlatforms(config: HermesConfig) {
 }
 
 export function testMessagingPlatform(config: HermesConfig, id: string) {
-  return api<Record<string, unknown>>(
+  return apiOrDashboard(
     config,
     `/api/messaging/platforms/${encodeURIComponent(id)}/test`,
-    { method: "POST" },
+    (data) => (data && typeof data === "object" ? (data as Record<string, unknown>) : {}),
+    "POST",
   );
 }
 
@@ -282,10 +340,13 @@ export async function listWebhooks(config: HermesConfig) {
 }
 
 export function setWebhookEnabled(config: HermesConfig, name: string, enabled: boolean) {
-  return api<void>(config, `/api/webhooks/${encodeURIComponent(name)}/enabled`, {
-    method: "POST",
-    body: { enabled },
-  });
+  return apiOrDashboard(
+    config,
+    `/api/webhooks/${encodeURIComponent(name)}/enabled`,
+    () => undefined,
+    "POST",
+    { enabled },
+  );
 }
 
 /* -------------------------------------------------------------------- cron */
@@ -302,18 +363,53 @@ export interface CronJob {
   deliver_to?: string;
 }
 
+export interface CronRun {
+  id?: string;
+  session_id?: string;
+  status?: string;
+  started_at?: string | number;
+  finished_at?: string | number;
+  summary?: string;
+  output?: string;
+}
+
+export interface CronDeliveryTarget {
+  id: string;
+  label: string;
+  platform?: string;
+}
+
+export async function cronDeliveryTargets(config: HermesConfig): Promise<CronDeliveryTarget[]> {
+  return apiOrDashboard(config, "/api/cron/delivery-targets", (data) => {
+    const raw = list<unknown>(data, "targets", "delivery_targets", "channels");
+    return raw
+      .map((item): CronDeliveryTarget | null => {
+        if (typeof item === "string" && item.trim()) {
+          return { id: item.trim(), label: item.trim() };
+        }
+        if (item && typeof item === "object") {
+          const rec = item as Record<string, unknown>;
+          const id = String(rec["id"] ?? rec["target"] ?? rec["name"] ?? "").trim();
+          if (!id) return null;
+          const label = String(rec["label"] ?? rec["name"] ?? id).trim();
+          const platform = typeof rec["platform"] === "string" ? rec["platform"] : undefined;
+          return { id, label, ...(platform ? { platform } : {}) };
+        }
+        return null;
+      })
+      .filter((item): item is CronDeliveryTarget => item !== null);
+  });
+}
+
 export async function listCronJobs(config: HermesConfig) {
   return apiOrDashboard(config, "/api/cron/jobs", (data) => list<CronJob>(data, "jobs"));
 }
 
 export async function cronRuns(config: HermesConfig, jobId: string, limit = 20) {
-  const data = await api<unknown>(
+  return apiOrDashboard(
     config,
     `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}`,
-  );
-  return list<{ id?: string; status?: string; started_at?: string | number; summary?: string }>(
-    data,
-    "runs",
+    (data) => list<CronRun>(data, "runs", "history"),
   );
 }
 
@@ -327,6 +423,36 @@ export function cronAction(
     `/api/cron/jobs/${encodeURIComponent(jobId)}/${action}`,
     () => undefined,
     "POST",
+  );
+}
+
+export function createCronJob(
+  config: HermesConfig,
+  input: { name: string; schedule: string; prompt: string; deliver_to?: string },
+) {
+  return apiOrDashboard(config, "/api/cron/jobs", () => undefined, "POST", input);
+}
+
+export function updateCronJob(
+  config: HermesConfig,
+  jobId: string,
+  input: { name?: string; schedule?: string; prompt?: string; deliver_to?: string },
+) {
+  return apiOrDashboard(
+    config,
+    `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    () => undefined,
+    "PATCH",
+    input,
+  );
+}
+
+export function deleteCronJob(config: HermesConfig, jobId: string) {
+  return apiOrDashboard(
+    config,
+    `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    () => undefined,
+    "DELETE",
   );
 }
 
@@ -379,9 +505,34 @@ export async function listProfiles(config: HermesConfig) {
 }
 
 export function profileSoul(config: HermesConfig, name: string) {
-  return api<{ content?: string; soul?: string }>(
+  return apiOrDashboard(config, `/api/profiles/${encodeURIComponent(name)}/soul`, (data) =>
+    data && typeof data === "object"
+      ? (data as { content?: string; soul?: string })
+      : { content: typeof data === "string" ? data : "" },
+  );
+}
+
+export function updateProfileSoul(config: HermesConfig, name: string, content: string) {
+  return apiOrDashboard(
     config,
     `/api/profiles/${encodeURIComponent(name)}/soul`,
+    () => undefined,
+    "PUT",
+    { content, soul: content },
+  );
+}
+
+export function saveProfileConfig(
+  config: HermesConfig,
+  name: string,
+  input: { model?: string; is_default?: boolean; soul?: string },
+) {
+  return apiOrDashboard(
+    config,
+    `/api/profiles/${encodeURIComponent(name)}`,
+    () => undefined,
+    "PUT",
+    input,
   );
 }
 
@@ -389,6 +540,10 @@ export function profileSoul(config: HermesConfig, name: string) {
 
 export function gatewayStatus(config: HermesConfig) {
   return api<Record<string, unknown>>(config, "/api/status");
+}
+
+export function reloadHostGateway(config: HermesConfig) {
+  return apiOrDashboard(config, "/api/reload", () => undefined, "POST");
 }
 
 export async function usageAnalytics(config: HermesConfig, days = 7) {

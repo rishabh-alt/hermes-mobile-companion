@@ -1,4 +1,4 @@
-import { Brain, Copy, Paperclip, RotateCcw, Terminal } from "lucide-react";
+import { Brain, Copy, Paperclip, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import { useState } from "react";
 import {
   Message,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { visibleChatText } from "@/lib/hermes/transcript";
 import type { HermesMessage, ToolCall } from "@/lib/hermes/types";
@@ -40,8 +41,27 @@ function ReasoningBlock({ text, live }: { text: string; live?: boolean | undefin
   );
 }
 
-function ToolBlock({ call }: { call: ToolCall }) {
+function toolArgSummary(input: unknown): string {
+  if (!input || typeof input !== "object") {
+    return typeof input === "string" ? input.slice(0, 56) : "";
+  }
+  const record = input as Record<string, unknown>;
+  for (const key of ["command", "cmd", "path", "file", "query", "q", "url", "name", "action"]) {
+    const val = record[key];
+    if (typeof val === "string" && val.trim()) {
+      return val.trim().replace(/\s+/g, " ").slice(0, 56);
+    }
+  }
+  const firstEntry = Object.entries(record)[0];
+  if (!firstEntry) return "";
+  const [k, v] = firstEntry;
+  const formatted = typeof v === "string" ? v : JSON.stringify(v);
+  return `${k}: ${formatted}`.slice(0, 56);
+}
+
+function ToolBlock({ call, expandedByDefault }: { call: ToolCall; expandedByDefault: boolean }) {
   const isTerminal = /^(bash|shell|terminal|run|exec)/i.test(call.name);
+  const summary = toolArgSummary(call.input);
   const output =
     call.output === undefined
       ? undefined
@@ -49,12 +69,17 @@ function ToolBlock({ call }: { call: ToolCall }) {
         ? call.output
         : JSON.stringify(call.output, null, 2);
   return (
-    <div className="mb-2">
-      <Tool className="border-border/70 bg-secondary/40" defaultOpen={false}>
+    <div className="mb-1.5">
+      <Tool
+        key={`${call.id}-${expandedByDefault ? "exp" : "cmp"}`}
+        className="border-border/70 bg-secondary/35"
+        defaultOpen={expandedByDefault}
+      >
         <ToolHeader
           type={`tool-${call.name}` as `tool-${string}`}
           state={call.state}
-          title={call.name}
+          title={summary ? `${call.name} · ${summary}` : call.name}
+          className="px-3 py-2 text-xs"
         />
         <ToolContent>
           <ToolInput input={call.input} />
@@ -118,8 +143,28 @@ interface Props {
 }
 
 export function MessageBubble({ message, live, onRetry, onReact }: Props) {
+  const { config } = useHermesConfig();
   const [showActions, setShowActions] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const isUser = message.role === "user";
+  const expandedTools = config.toolDetail === "expanded";
+
+  const toggleSpeak = () => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const cleanText = visibleChatText(message.text).trim();
+    if (!cleanText) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    setSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
 
   return (
     <Message from={isUser ? "user" : "assistant"} className="[&>div]:max-w-[92%]">
@@ -140,7 +185,7 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
           <Attachments message={message} />
           {message.reasoning && <ReasoningBlock text={message.reasoning} live={live} />}
           {message.tools?.map((call) => (
-            <ToolBlock key={call.id} call={call} />
+            <ToolBlock key={call.id} call={call} expandedByDefault={expandedTools} />
           ))}
           {message.text ? (
             isUser ? (
@@ -159,6 +204,21 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
             </p>
           )}
         </MessageContent>
+
+        {!isUser && !live && message.text.trim() && !showActions && (
+          <div className="mt-1 flex items-center gap-1">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              aria-label={speaking ? "Stop reading aloud" : "Read aloud"}
+              onClick={toggleSpeak}
+            >
+              {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+        )}
 
         {!!message.reactions?.length && (
           <div className={cn("mt-1 flex gap-1", isUser && "justify-end")}>
@@ -185,6 +245,24 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
                 <Copy />
               </Button>
             </MessageAction>
+            {!isUser && message.text.trim() && (
+              <MessageAction
+                label={speaking ? "Stop" : "Speak"}
+                tooltip={speaking ? "Stop reading" : "Read aloud"}
+              >
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  onClick={() => {
+                    haptic("tap");
+                    toggleSpeak();
+                    setShowActions(false);
+                  }}
+                >
+                  {speaking ? <VolumeX /> : <Volume2 />}
+                </Button>
+              </MessageAction>
+            )}
             {onRetry && !isUser && (
               <MessageAction label="Retry" tooltip="Retry">
                 <Button

@@ -64,6 +64,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const remote = useGateway((c) => listSessions(c, 40), []);
   const profiles = useGateway(listProfiles, ["drawer-profiles"]);
   const [tab, setTab] = useState<"sessions" | "bots">("sessions");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "cron" | "messaging">("all");
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -73,6 +74,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
     Earlier: true,
   });
   const navigate = useNavigate();
+  const compact = config.drawerDensity === "compact";
 
   useEffect(() => {
     const onVisible = () => {
@@ -87,6 +89,27 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const counts = new Map(remoteRows.map((item) => [item.id, item.message_count ?? 0]));
   const q = query.trim().toLowerCase();
   const matches = (label: string) => !q || label.toLowerCase().includes(q);
+  const matchesSource = (session: Session) => {
+    if (sourceFilter === "all") return true;
+    const src = (session.source ?? "").toLowerCase();
+    const label = sessionLabel(session).toLowerCase();
+    if (sourceFilter === "cron") {
+      return src === "cron" || src === "schedule" || /^(\[?cron\]?|scheduled|job:)/i.test(label);
+    }
+    return (
+      [
+        "messaging",
+        "telegram",
+        "discord",
+        "slack",
+        "whatsapp",
+        "signal",
+        "matrix",
+        "webhook",
+      ].includes(src) ||
+      /^(\[?(telegram|discord|slack|whatsapp|signal|sms|webhook)\]?[:\s-])/i.test(label)
+    );
+  };
   const listed = useMemo(() => {
     const hostSessions: Session[] = remoteRows.map((item) => {
       const local = sessions.find((session) => session.id === item.id);
@@ -98,14 +121,17 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
         createdAt: stamp || local?.createdAt || 0,
         updatedAt: stamp || local?.updatedAt || 0,
         ...(item.model || local?.model ? { model: item.model ?? local?.model } : {}),
+        ...(item.source || local?.source ? { source: item.source ?? local?.source } : {}),
         messages: local?.messages ?? [],
       };
     });
     const localOnly = sessions.filter((session) => !remoteIds.has(session.id));
-    return [...hostSessions, ...localOnly].filter((session) => matches(sessionLabel(session)));
+    return [...hostSessions, ...localOnly].filter(
+      (session) => matches(sessionLabel(session)) && matchesSource(session),
+    );
     // remoteRows is the gateway payload; sessions is the open-chat cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote.data, sessions, query]);
+  }, [remote.data, sessions, query, sourceFilter]);
   const { pinned, groups } = groupSessions(listed);
 
   const startNew = async () => {
@@ -180,17 +206,19 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 haptic("tap");
                 onNavigate?.();
               }}
-              className="min-w-0 flex-1 py-2 pl-2 text-left"
+              className={cn("min-w-0 flex-1 pl-2 text-left", compact ? "py-1" : "py-2")}
             >
               <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
                 {sessionLabel(session)}
               </p>
-              <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                {session.model ? `${session.model.split("/").pop()} · ` : ""}
-                {session.messages.length || counts.get(session.id)
-                  ? `${session.messages.length || counts.get(session.id)} messages`
-                  : ""}
-              </p>
+              {!compact && (
+                <p className="truncate pt-0.5 text-xs text-muted-foreground">
+                  {session.model ? `${session.model.split("/").pop()} · ` : ""}
+                  {session.messages.length || counts.get(session.id)
+                    ? `${session.messages.length || counts.get(session.id)} messages`
+                    : ""}
+                </p>
+              )}
             </Link>
             <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-lg:opacity-60">
               <Button
@@ -334,7 +362,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               </Link>
             ))}
 
-            <div className="relative px-1 py-3">
+            <div className="relative px-1 pt-3 pb-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
@@ -342,6 +370,30 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 placeholder="Search sessions…"
                 className="h-9 rounded-lg border-0 bg-transparent pl-9 text-sm focus-visible:bg-background/40"
               />
+            </div>
+
+            <div className="mb-2 flex items-center gap-1 px-2">
+              {(
+                [
+                  { id: "all", label: "All" },
+                  { id: "cron", label: "Cron" },
+                  { id: "messaging", label: "Messaging" },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSourceFilter(item.id)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                    sourceFilter === item.id
+                      ? "bg-sidebar-accent text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
             <section>

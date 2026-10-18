@@ -110,15 +110,36 @@ export function isConfigured(config: HermesConfig) {
   return isSecureBaseUrl(config.baseUrl);
 }
 
+function applyAppearance(config: HermesConfig) {
+  if (typeof document === "undefined" || !document.documentElement?.style) return;
+  const scale = config.fontScale ?? "md";
+  document.documentElement.style.fontSize =
+    scale === "sm" ? "14px" : scale === "lg" ? "17px" : "16px";
+  const theme = config.theme ?? "dark";
+  const prefersLight =
+    theme === "light" ||
+    (theme === "system" &&
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches);
+  document.documentElement.classList.toggle("light", prefersLight);
+  document.documentElement.classList.toggle("dark", !prefersLight);
+}
+
 export function useHermesConfig() {
   const [config, setConfig] = useState<HermesConfig>(defaultConfig);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let active = true;
-    const sync = () => setConfig(readConfig());
+    const sync = () => {
+      const next = readConfig();
+      applyAppearance(next);
+      setConfig(next);
+    };
     void loadConfig().then((loaded) => {
       if (!active) return;
+      applyAppearance(loaded);
       setConfig(loaded);
       setReady(true);
     });
@@ -134,6 +155,7 @@ export function useHermesConfig() {
   const update = useCallback((patch: Partial<HermesConfig>) => {
     const next = { ...readConfig(), ...patch };
     writeConfig(next);
+    applyAppearance(next);
     setConfig(next);
   }, []);
 

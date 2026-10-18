@@ -38,10 +38,46 @@ function isRedacted(value: string) {
   return /\*{3,}|redacted|\[set]/i.test(value);
 }
 
+export function sanitizePairingUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("Scan or paste an https gateway address.");
+  let candidate = trimmed;
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (parsed["token"] || parsed["password"] || parsed["adminToken"] || parsed["apiKey"]) {
+        throw new Error(
+          "Refusing QR payload that contains a token or password. Scan an address-only QR code.",
+        );
+      }
+      candidate = String(parsed["baseUrl"] ?? parsed["url"] ?? "").trim();
+    } catch (err) {
+      if (err instanceof Error && /Refusing QR/i.test(err.message)) throw err;
+      throw new Error("Invalid QR payload. Expected an https gateway address.");
+    }
+  }
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new Error("Gateway address must be a full https URL.");
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("Gateway address must use https.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Do not include credentials in a gateway QR code or link.");
+  }
+  if (url.search || url.hash) {
+    throw new Error("Gateway QR address cannot include query parameters or fragments.");
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
 async function dashboardRequest(
   base: string,
   path: string,
-  method: "GET" | "POST" | "PUT" | "PATCH",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
 ) {
   const url = `${normalizeDashboardUrl(base)}${path}`;
@@ -70,7 +106,7 @@ async function dashboardRequest(
 export async function dashboardJson(
   baseUrl: string,
   path: string,
-  method: "GET" | "POST" | "PUT" | "PATCH" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: unknown,
 ) {
   const response = await dashboardRequest(baseUrl, path, method, body);
@@ -214,7 +250,7 @@ export async function setDashboardActiveProfile(baseUrl: string, name: string) {
 
 export interface DashboardField {
   key: string;
-  type: "string" | "number" | "boolean" | "select";
+  type: "string" | "number" | "boolean" | "select" | "array";
   description: string;
   options: string[];
   value: unknown;
@@ -282,8 +318,17 @@ export async function readDashboardSection(
       if (!raw || typeof raw !== "object") return [];
       const field = raw as Record<string, unknown>;
       if (!categories.has(String(field["category"] ?? ""))) return [];
-      const type = String(field["type"] ?? "");
-      if (type !== "string" && type !== "number" && type !== "boolean" && type !== "select")
+      const rawType = String(field["type"] ?? "");
+      const currentVal = valueAt(values, key);
+      const type =
+        rawType === "list" || rawType === "array" || Array.isArray(currentVal) ? "array" : rawType;
+      if (
+        type !== "string" &&
+        type !== "number" &&
+        type !== "boolean" &&
+        type !== "select" &&
+        type !== "array"
+      )
         return [];
       if (/api_key|token|secret|password/i.test(key)) return [];
       const options = field["options"];
@@ -293,19 +338,368 @@ export async function readDashboardSection(
           type: type as DashboardField["type"],
           description: String(field["description"] ?? ""),
           options: Array.isArray(options) ? options.map(String) : [],
-          value: valueAt(values, key),
+          value: currentVal,
         },
       ];
     })
-    .slice(0, 40);
+    .slice(0, 120);
 }
 
-export async function saveDashboardValue(baseUrl: string, key: string, value: unknown) {
+export async function saveDashboardValue(
+  baseUrl: string,
+  key: string,
+  value: unknown,
+): Promise<{ savedValue: unknown }> {
   const response = await dashboardRequest(baseUrl, "/api/config", "PUT", {
     config: nestValue(key, value),
   });
   if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
   if (response.status < 200 || response.status >= 300) {
     throw new HermesError("The dashboard did not save that setting.", response.status);
+  }
+  const verify = await dashboardRequest(baseUrl, "/api/config", "GET");
+  if (verify.status >= 200 && verify.status < 300 && verify.text.trim()) {
+    try {
+      const savedBody = JSON.parse(verify.text) as Record<string, unknown>;
+      const rawConfig = savedBody["config"] ?? savedBody;
+      const values =
+        rawConfig && typeof rawConfig === "object" ? (rawConfig as Record<string, unknown>) : {};
+      return { savedValue: valueAt(values, key) };
+    } catch {
+      return { savedValue: value };
+    }
+  }
+  return { savedValue: value };
+}
+
+export interface DashboardEnvKeyStatus {
+  key: string;
+  configured: boolean;
+  masked?: string | undefined;
+}
+
+export function parseDashboardEnvPayload(payload: unknown): DashboardEnvKeyStatus[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const source =
+    root["keys"] ?? root["env"] ?? root["variables"] ?? (Array.isArray(payload) ? payload : root);
+  if (Array.isArray(source)) {
+    return source.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const row = entry as Record<string, unknown>;
+      const key = String(row["key"] ?? row["name"] ?? "").trim();
+      if (!key) return [];
+      const configured =
+        row["configured"] === true ||
+        row["is_set"] === true ||
+        row["set"] === true ||
+        Boolean(row["masked"] || row["preview"]);
+      const masked =
+        typeof row["masked"] === "string"
+          ? row["masked"]
+          : typeof row["preview"] === "string"
+            ? row["preview"]
+            : undefined;
+      return [{ key, configured, ...(masked ? { masked } : {}) }];
+    });
+  }
+  if (source && typeof source === "object") {
+    return Object.entries(source as Record<string, unknown>).flatMap(([key, val]) => {
+      if (key === "ok" || key === "status") return [];
+      if (typeof val === "boolean") return [{ key, configured: val }];
+      if (typeof val === "string") {
+        const configured = Boolean(val.trim()) && val !== "unset";
+        return [{ key, configured, ...(configured ? { masked: "••••••••" } : {}) }];
+      }
+      if (val && typeof val === "object") {
+        const info = val as Record<string, unknown>;
+        const configured =
+          info["configured"] === true || info["is_set"] === true || info["set"] === true;
+        return [{ key, configured }];
+      }
+      return [];
+    });
+  }
+  return [];
+}
+
+export async function readDashboardEnvKeys(baseUrl: string): Promise<DashboardEnvKeyStatus[]> {
+  const response = await dashboardRequest(baseUrl, "/api/env", "GET");
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status === 404) return [];
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The dashboard did not return environment key status.", response.status);
+  }
+  try {
+    return parseDashboardEnvPayload(JSON.parse(response.text));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveDashboardEnvKey(
+  baseUrl: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  const cleanKey = key.trim();
+  if (!/^[A-Z0-9_]+$/i.test(cleanKey)) {
+    throw new Error("Environment key name must use letters, numbers, and underscores.");
+  }
+  if (isRedacted(value)) {
+    throw new Error("Paste the real secret key, not a masked placeholder.");
+  }
+  const payload = { key: cleanKey, value, env: { [cleanKey]: value } };
+  let response = await dashboardRequest(baseUrl, "/api/env", "PUT", payload);
+  if (response.status === 405 || response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/env", "POST", payload);
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The dashboard did not save that environment key.", response.status);
+  }
+}
+
+export interface PairingScanResult {
+  baseUrl: string;
+  oneTimeCode?: string | undefined;
+}
+
+export function parsePairingInput(raw: string, fallbackBaseUrl = ""): PairingScanResult {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("Scan or paste an https gateway address or one-time pairing code.");
+  if (/^hermes-pair:/i.test(trimmed)) {
+    const rest = trimmed.replace(/^hermes-pair:/i, "").trim();
+    const [maybeUrl, maybeCode] = rest.includes("#") ? rest.split("#", 2) : ["", rest];
+    const baseUrl = maybeUrl ? sanitizePairingUrl(maybeUrl) : sanitizePairingUrl(fallbackBaseUrl);
+    const code = (maybeCode ?? "").trim();
+    if (!/^[A-Za-z0-9_-]{4,64}$/.test(code)) {
+      throw new Error("Invalid one-time pairing code.");
+    }
+    return { baseUrl, oneTimeCode: code };
+  }
+  if (/^[A-Za-z0-9-]{6,24}$/.test(trimmed) && !trimmed.includes("://")) {
+    const baseUrl = sanitizePairingUrl(fallbackBaseUrl);
+    return { baseUrl, oneTimeCode: trimmed };
+  }
+  if (trimmed.startsWith("{")) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      throw new Error("Invalid QR payload. Expected an https gateway address.");
+    }
+    if (parsed["token"] || parsed["password"] || parsed["adminToken"] || parsed["apiKey"]) {
+      throw new Error(
+        "Refusing QR payload that contains a token or password. Scan an address-only QR code.",
+      );
+    }
+    const baseUrl = sanitizePairingUrl(
+      String(parsed["baseUrl"] ?? parsed["url"] ?? fallbackBaseUrl),
+    );
+    const code = typeof parsed["code"] === "string" ? parsed["code"].trim() : undefined;
+    return { baseUrl, ...(code ? { oneTimeCode: code } : {}) };
+  }
+  return { baseUrl: sanitizePairingUrl(trimmed) };
+}
+
+export async function exchangePairingCode(
+  baseUrl: string,
+  code: string,
+): Promise<{ token?: string; dashboardBaseUrl?: string }> {
+  const cleanUrl = sanitizePairingUrl(baseUrl);
+  const cleanCode = code.trim();
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(cleanCode)) {
+    throw new Error("One-time pairing code must be 4–64 alphanumeric characters.");
+  }
+  const response = await CapacitorHttp.request({
+    url: `${cleanUrl}/api/pairing/exchange`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: { code: cleanCode },
+    connectTimeout: 10_000,
+    readTimeout: 10_000,
+    responseType: "text",
+  });
+  if (response.status === 404) {
+    throw new HermesError(
+      "Gateway address saved. This host does not issue one-time pairing codes yet—enter your token below.",
+      404,
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new HermesError("That one-time pairing code is expired or invalid.", response.status);
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not accept that pairing code.", response.status);
+  }
+  const data = (
+    typeof response.data === "string" ? JSON.parse(response.data) : response.data
+  ) as Record<string, unknown>;
+  return {
+    ...(typeof data["token"] === "string" && data["token"].trim()
+      ? { token: data["token"].trim() }
+      : {}),
+    ...(typeof data["dashboard_url"] === "string" && data["dashboard_url"].trim()
+      ? { dashboardBaseUrl: normalizeDashboardUrl(data["dashboard_url"].trim()) }
+      : {}),
+  };
+}
+
+export interface HostMemoryStatus {
+  provider: string;
+  enabled: boolean;
+  status: string;
+  entryCount?: number | undefined;
+  canReset: boolean;
+}
+
+export interface MemoryFactItem {
+  id: string;
+  peer: string;
+  fact: string;
+  updatedAt?: string | undefined;
+}
+
+export function parseMemoryFactsPayload(payload: unknown): MemoryFactItem[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const mem =
+    root["memory"] && typeof root["memory"] === "object"
+      ? (root["memory"] as Record<string, unknown>)
+      : root;
+  const peers = mem["peers"] ?? root["peers"];
+  if (Array.isArray(peers)) {
+    return peers.flatMap((peerItem, peerIdx) => {
+      if (!peerItem || typeof peerItem !== "object") return [];
+      const row = peerItem as Record<string, unknown>;
+      const peerName = String(row["name"] ?? row["id"] ?? `peer-${peerIdx + 1}`);
+      const rawFacts = row["facts"] ?? row["entries"] ?? [];
+      if (!Array.isArray(rawFacts)) return [];
+      return rawFacts.flatMap((factItem, factIdx) => {
+        if (typeof factItem === "string" && factItem.trim()) {
+          return [{ id: `${peerName}-${factIdx}`, peer: peerName, fact: factItem.trim() }];
+        }
+        if (factItem && typeof factItem === "object") {
+          const fObj = factItem as Record<string, unknown>;
+          const text = String(fObj["fact"] ?? fObj["text"] ?? fObj["content"] ?? "").trim();
+          if (!text) return [];
+          return [
+            {
+              id: String(fObj["id"] ?? `${peerName}-${factIdx}`),
+              peer: peerName,
+              fact: text,
+              ...(typeof fObj["updated_at"] === "string" ? { updatedAt: fObj["updated_at"] } : {}),
+            },
+          ];
+        }
+        return [];
+      });
+    });
+  }
+  const rawFacts = mem["facts"] ?? mem["entries"] ?? root["facts"] ?? root["entries"];
+  if (Array.isArray(rawFacts)) {
+    return rawFacts.flatMap((item, idx) => {
+      if (typeof item === "string" && item.trim()) {
+        return [{ id: `fact-${idx}`, peer: "default", fact: item.trim() }];
+      }
+      if (item && typeof item === "object") {
+        const row = item as Record<string, unknown>;
+        const fact = String(row["fact"] ?? row["text"] ?? row["content"] ?? "").trim();
+        if (!fact) return [];
+        return [
+          {
+            id: String(row["id"] ?? `fact-${idx}`),
+            peer: String(row["peer"] ?? row["scope"] ?? "default"),
+            fact,
+            ...(typeof row["updated_at"] === "string" ? { updatedAt: row["updated_at"] } : {}),
+          },
+        ];
+      }
+      return [];
+    });
+  }
+  return [];
+}
+
+export function parseHostMemoryPayload(payload: unknown): HostMemoryStatus {
+  const root = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const mem =
+    root["memory"] && typeof root["memory"] === "object"
+      ? (root["memory"] as Record<string, unknown>)
+      : root;
+  const provider = String(mem["provider"] ?? mem["backend"] ?? "built-in");
+  const enabled = mem["enabled"] !== false;
+  const status = String(mem["status"] ?? (enabled ? "active" : "disabled"));
+  const rawCount = mem["count"] ?? mem["entries"] ?? mem["entry_count"] ?? mem["facts_count"];
+  const entryCount = typeof rawCount === "number" ? rawCount : undefined;
+  return {
+    provider,
+    enabled,
+    status,
+    ...(entryCount !== undefined ? { entryCount } : {}),
+    canReset: mem["can_reset"] !== false,
+  };
+}
+
+export async function readDashboardMemoryStatus(baseUrl: string): Promise<{
+  status: HostMemoryStatus;
+  facts: MemoryFactItem[];
+}> {
+  const response = await dashboardRequest(baseUrl, "/api/memory", "GET");
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The dashboard did not return memory status.", response.status);
+  }
+  const parsed = JSON.parse(response.text) as unknown;
+  let facts = parseMemoryFactsPayload(parsed);
+  if (facts.length === 0) {
+    const peersRes = await dashboardRequest(baseUrl, "/api/memory/peers", "GET").catch(() => null);
+    if (peersRes && peersRes.status >= 200 && peersRes.status < 300 && peersRes.text.trim()) {
+      try {
+        facts = parseMemoryFactsPayload(JSON.parse(peersRes.text));
+      } catch {
+        // Host does not return peer list JSON on /api/memory/peers
+      }
+    }
+  }
+  return { status: parseHostMemoryPayload(parsed), facts };
+}
+
+export async function correctDashboardMemoryFact(
+  baseUrl: string,
+  input: { id: string; peer: string; fact: string; action: "update" | "delete" },
+): Promise<void> {
+  const path =
+    input.action === "delete"
+      ? `/api/memory/facts/${encodeURIComponent(input.id)}`
+      : "/api/memory/correct";
+  const method = input.action === "delete" ? "DELETE" : "POST";
+  let response = await dashboardRequest(
+    baseUrl,
+    path,
+    method,
+    input.action === "delete" ? undefined : input,
+  );
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(baseUrl, "/api/memory", "PUT", input);
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError(
+      "This host does not expose peer fact corrections over /api/memory yet.",
+      response.status,
+    );
+  }
+}
+
+export async function resetDashboardMemory(baseUrl: string): Promise<void> {
+  let response = await dashboardRequest(baseUrl, "/api/memory/reset", "POST", {});
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(baseUrl, "/api/memory", "DELETE");
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not reset memory.", response.status);
   }
 }

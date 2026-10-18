@@ -42,10 +42,34 @@ export interface Session {
   updatedAt: number;
   provider?: string | undefined;
   model?: string | undefined;
+  source?: string | undefined;
   messages: HermesMessage[];
 }
 
 export type ReasoningLevel = "off" | "low" | "medium" | "high";
+
+export type FontScale = "sm" | "md" | "lg";
+export type ThemeMode = "dark" | "light" | "system";
+export type ToolDetailMode = "compact" | "expanded";
+export type DrawerDensityMode = "comfortable" | "compact";
+
+export interface NotificationPrefs {
+  turnComplete: boolean;
+  approvals: boolean;
+  cronFailures?: boolean | undefined;
+}
+
+export interface SavedHost {
+  id: string;
+  label: string;
+  baseUrl: string;
+  dashboardBaseUrl: string;
+  activeProfile?: string | undefined;
+  profilePathPrefix?: string | undefined;
+  provider?: string | undefined;
+  model?: string | undefined;
+  dashboardUsername?: string | undefined;
+}
 
 export interface HermesConfig {
   baseUrl: string;
@@ -62,6 +86,13 @@ export interface HermesConfig {
   haptics: boolean;
   reasoning: ReasoningLevel;
   fastMode: boolean;
+  fontScale?: FontScale | undefined;
+  theme?: ThemeMode | undefined;
+  toolDetail?: ToolDetailMode | undefined;
+  drawerDensity?: DrawerDensityMode | undefined;
+  showReasoning?: boolean | undefined;
+  notificationPrefs?: NotificationPrefs | undefined;
+  savedHosts?: SavedHost[] | undefined;
 }
 
 export interface HermesModel {

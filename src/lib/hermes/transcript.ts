@@ -1,5 +1,5 @@
 import type { GatewayMessage } from "./rest";
-import type { HermesMessage, ToolCall } from "./types";
+import type { Attachment, HermesMessage, ToolCall } from "./types";
 
 function firstLine(value: string): string {
   return value.replace(/\\n/g, "\n").split("\n")[0]?.trim().slice(0, 180) ?? "";
@@ -34,7 +34,8 @@ function textOf(content: unknown): string {
           const item = (part ?? {}) as Record<string, unknown>;
           return typeof item["text"] === "string" ? item["text"] : "";
         })
-        .join(""),
+        .join("\n")
+        .trim(),
     );
   }
   if (content && typeof content === "object") {
@@ -42,6 +43,38 @@ function textOf(content: unknown): string {
     if (typeof item["text"] === "string") return visibleChatText(item["text"]);
   }
   return "";
+}
+
+function imageAttachmentsOf(content: unknown, messageId: string): Attachment[] {
+  const parts = Array.isArray(content)
+    ? content
+    : content && typeof content === "object"
+      ? [content]
+      : [];
+  const attachments: Attachment[] = [];
+  parts.forEach((part, index) => {
+    if (!part || typeof part !== "object") return;
+    const item = part as Record<string, unknown>;
+    if (item["type"] !== "image_url" && item["type"] !== "image") return;
+    const imageUrl = item["image_url"];
+    const url =
+      typeof imageUrl === "string"
+        ? imageUrl
+        : imageUrl && typeof imageUrl === "object"
+          ? String((imageUrl as Record<string, unknown>)["url"] ?? "")
+          : typeof item["url"] === "string"
+            ? item["url"]
+            : "";
+    if (!url.trim()) return;
+    const mimeMatch = /^data:(image\/[a-zA-Z0-9.+-]+);/i.exec(url);
+    attachments.push({
+      id: `${messageId}-img-${index}`,
+      name: typeof item["name"] === "string" ? item["name"] : `image-${index + 1}`,
+      mediaType: mimeMatch?.[1] ?? "image/jpeg",
+      url,
+    });
+  });
+  return attachments;
 }
 
 /** Host notes injected for the model must not appear in the phone bubble. */
@@ -60,8 +93,9 @@ export function toHermesMessage(raw: GatewayMessage, index: number): HermesMessa
       ? raw.created_at
       : Date.parse(raw.created_at) || Date.now()
     : Date.now();
+  const id = raw.id ?? `gw-${index}`;
   const base = {
-    id: raw.id ?? `gw-${index}`,
+    id,
     createdAt: created,
     model: raw.model,
     reasoning: raw.reasoning,
@@ -79,5 +113,11 @@ export function toHermesMessage(raw: GatewayMessage, index: number): HermesMessa
     return { ...base, role: "assistant", text: "", tools: [call] };
   }
   const role = raw.role === "user" || raw.role === "system" ? raw.role : "assistant";
-  return { ...base, role, text: textOf(raw.content) };
+  const attachments = imageAttachmentsOf(raw.content, id);
+  return {
+    ...base,
+    role,
+    text: textOf(raw.content),
+    ...(attachments.length ? { attachments } : {}),
+  };
 }

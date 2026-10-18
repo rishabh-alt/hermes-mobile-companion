@@ -1,0 +1,5 @@
+{
+  "name": "Hermes Companion",
+  "description": "Mobile and web companion interface for the Hermes Agent gateway",
+  "requestFramePermissions": []
+}

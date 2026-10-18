@@ -96,9 +96,16 @@ function MessagingRoute() {
               <Switch
                 checked={hook.enabled !== false}
                 onCheckedChange={(next) => {
-                  void setWebhookEnabled(webhooks.config, hook.name, next).finally(
-                    webhooks.refresh,
-                  );
+                  void setWebhookEnabled(webhooks.config, hook.name, next)
+                    .then(() => toast.success(`${hook.name} ${next ? "enabled" : "disabled"}`))
+                    .catch((err: unknown) =>
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : "The host rejected that webhook toggle.",
+                      ),
+                    )
+                    .finally(webhooks.refresh);
                 }}
               />
             }

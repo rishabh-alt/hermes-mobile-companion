@@ -7,6 +7,16 @@ export default defineConfig({
   base: "./",
   plugins: [tanstackRouter({ target: "react", autoCodeSplitting: true }), react(), tailwindcss()],
   resolve: { tsconfigPaths: true },
+  server: {
+    host: "0.0.0.0",
+    port: 3000,
+    allowedHosts: true,
+    hmr: false,
+  },
+  optimizeDeps: {
+    entries: ["index.html"],
+    exclude: ["shiki", "@streamdown/code", "vitest"],
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

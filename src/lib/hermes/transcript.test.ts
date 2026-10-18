@@ -37,4 +37,27 @@ describe("tool transcript", () => {
     expect(message.text).toBe("Profile switch shows me this");
     expect(visibleChatText("hello\n<memory-context>\nsecret\n")).toBe("hello");
   });
+
+  it("restores image attachments from multimodal message content", () => {
+    const message = toHermesMessage(
+      {
+        id: "msg-img",
+        role: "user",
+        content: [
+          { type: "text", text: "What is in this screenshot?" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+        ],
+      },
+      2,
+    );
+    expect(message.text).toBe("What is in this screenshot?");
+    expect(message.attachments).toEqual([
+      {
+        id: "msg-img-img-1",
+        name: "image-2",
+        mediaType: "image/png",
+        url: "data:image/png;base64,iVBORw0KGgo=",
+      },
+    ]);
+  });
 });

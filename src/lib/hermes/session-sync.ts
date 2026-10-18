@@ -33,10 +33,23 @@ export function mergePulledMessages(local: HermesMessage[], pulled: HermesMessag
   const localAt = lastUser ? lastUserIndex(local, lastUser) : -1;
   const localReply = local
     .slice(localAt + 1)
-    .find((message) => message.role === "assistant" && message.text.trim());
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        (Boolean(message.text.trim()) || Boolean(message.tools?.length)),
+    );
   const pulledReply = pulled
     .slice(pulledAt + 1)
-    .find((message) => message.role === "assistant" && message.text.trim());
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        (Boolean(message.text.trim()) || Boolean(message.tools?.length)),
+    );
   if (localReply && !pulledReply) return local;
+  // If local had an attachment-only user message at the tail with a reply not yet in pulled:
+  if (!lastUser && local.length > pulled.length) {
+    const tailLocal = local[local.length - 1];
+    if (tailLocal?.role === "assistant" && tailLocal.text.trim()) return local;
+  }
   return pulled;
 }

@@ -49,6 +49,20 @@ export async function setDashboardCookie(value: string) {
   await writeNamedSecret("dashboard_cookie", value);
 }
 
+const memoryHostTokens = new Map<string, string>();
+
+export async function getHostToken(hostId: string) {
+  const key = `host_token_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  if (!Capacitor.isNativePlatform()) return memoryHostTokens.get(key) ?? "";
+  return readNamedSecret(key);
+}
+
+export async function setHostToken(hostId: string, value: string) {
+  const key = `host_token_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  memoryHostTokens.set(key, value);
+  await writeNamedSecret(key, value);
+}
+
 async function readNamedSecret(name: string) {
   if (!Capacitor.isNativePlatform()) return "";
   const result = await nativeStorage.getSecret({ name });

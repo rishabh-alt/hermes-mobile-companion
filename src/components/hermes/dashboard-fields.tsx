@@ -10,6 +10,7 @@ import {
 
 function shown(value: unknown) {
   if (value === undefined || value === null) return "";
+  if (Array.isArray(value)) return value.map(String).join(", ");
   return typeof value === "string" ? value : String(value);
 }
 
@@ -26,7 +27,7 @@ export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; secti
         if (cancelled) return;
         setFields(rows);
         setDrafts(Object.fromEntries(rows.map((row) => [row.key, shown(row.value)])));
-        if (rows.length === 0) setNote("This section has no simple fields on the Mac.");
+        if (rows.length === 0) setNote("This section has no editable fields on the host.");
       })
       .catch((err: unknown) => {
         if (!cancelled)
@@ -41,8 +42,13 @@ export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; secti
     setBusy(field.key);
     setNote(null);
     try {
-      await saveDashboardValue(baseUrl, field.key, value);
-      setNote(`Saved ${field.key}.`);
+      const { savedValue } = await saveDashboardValue(baseUrl, field.key, value);
+      const effective = savedValue !== undefined ? savedValue : value;
+      setFields((rows) =>
+        rows.map((row) => (row.key === field.key ? { ...row, value: effective } : row)),
+      );
+      setDrafts((current) => ({ ...current, [field.key]: shown(effective) }));
+      setNote(`Saved and verified ${field.key} on the host.`);
     } catch (err) {
       setNote(err instanceof Error ? err.message : "The dashboard refused that change.");
     } finally {
@@ -53,8 +59,11 @@ export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; secti
   return (
     <div className="space-y-3">
       {fields.map((field) => (
-        <div key={field.key} className="space-y-1 rounded-xl border border-border/70 p-3">
-          <p className="text-sm font-medium">{field.key}</p>
+        <div key={field.key} className="space-y-1.5 rounded-xl border border-border/70 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-mono text-xs font-medium">{field.key}</p>
+            <span className="text-[11px] text-muted-foreground">{field.type}</span>
+          </div>
           {field.description && (
             <p className="text-xs text-muted-foreground">{field.description}</p>
           )}
@@ -92,6 +101,7 @@ export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; secti
             <div className="flex gap-2">
               <Input
                 value={drafts[field.key] ?? ""}
+                placeholder={field.type === "array" ? "comma-separated values" : ""}
                 onChange={(event) =>
                   setDrafts((current) => ({ ...current, [field.key]: event.target.value }))
                 }
@@ -102,7 +112,16 @@ export function DashboardFields({ baseUrl, sectionId }: { baseUrl: string; secti
                 disabled={busy === field.key}
                 onClick={() => {
                   const raw = drafts[field.key] ?? "";
-                  void save(field, field.type === "number" ? Number(raw) : raw);
+                  const parsed =
+                    field.type === "number"
+                      ? Number(raw)
+                      : field.type === "array"
+                        ? raw
+                            .split(",")
+                            .map((part) => part.trim())
+                            .filter(Boolean)
+                        : raw;
+                  void save(field, parsed);
                 }}
               >
                 Save
