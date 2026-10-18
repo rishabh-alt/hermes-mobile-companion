@@ -489,10 +489,10 @@ export async function kanbanBoard(config: HermesConfig) {
 
 export interface Profile {
   name: string;
-  is_default?: boolean;
-  model?: string;
-  skills?: number;
-  path?: string;
+  is_default?: boolean | undefined;
+  model?: string | undefined;
+  skills?: number | undefined;
+  path?: string | undefined;
 }
 
 export async function fetchProfileInventory(config: HermesConfig) {

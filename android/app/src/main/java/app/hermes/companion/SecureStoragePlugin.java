@@ -72,10 +72,16 @@ public class SecureStoragePlugin extends Plugin {
         read(call, ADMIN_KEY);
     }
 
+    private boolean isAllowedSecret(String name) {
+        return DASHBOARD_PASSWORD.equals(name)
+                || DASHBOARD_COOKIE.equals(name)
+                || (name != null && name.startsWith("host_token_"));
+    }
+
     @PluginMethod
     public void setSecret(PluginCall call) {
         String name = call.getString("name", "");
-        if (!DASHBOARD_PASSWORD.equals(name) && !DASHBOARD_COOKIE.equals(name)) {
+        if (!isAllowedSecret(name)) {
             call.reject("Unknown secret");
             return;
         }
@@ -85,7 +91,7 @@ public class SecureStoragePlugin extends Plugin {
     @PluginMethod
     public void getSecret(PluginCall call) {
         String name = call.getString("name", "");
-        if (!DASHBOARD_PASSWORD.equals(name) && !DASHBOARD_COOKIE.equals(name)) {
+        if (!isAllowedSecret(name)) {
             call.reject("Unknown secret");
             return;
         }

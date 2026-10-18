@@ -12,6 +12,7 @@ export default tseslint.config(
       ".output/**",
       ".vinxi/**",
       ".wrangler/**",
+      ".aistudio/**",
       "node_modules/**",
       "android/**",
     ],
