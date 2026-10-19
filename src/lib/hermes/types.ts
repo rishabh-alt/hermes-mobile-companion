@@ -57,6 +57,7 @@ export interface NotificationPrefs {
   turnComplete: boolean;
   approvals: boolean;
   cronFailures?: boolean | undefined;
+  completionChime?: boolean | undefined;
 }
 
 export interface SavedHost {

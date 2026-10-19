@@ -1,4 +1,4 @@
-import { Cpu, Mic, MicOff, Radio } from "lucide-react";
+import { Cpu, Download, Mic, MicOff, Radio, Search, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { MessageBubble } from "@/components/hermes/message-list";
 import { ModelSheet } from "@/components/hermes/model-sheet";
+import { PromptTemplateSheet } from "@/components/hermes/prompt-template-sheet";
 import {
   AttachmentAddButton,
   AttachmentCameraButton,
@@ -23,9 +24,25 @@ import {
 } from "@/components/hermes/attachment-bar";
 import hermesMark from "@/assets/hermes-mark.png";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { playCompletionChime } from "@/lib/hermes/chime";
 import { HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
+import { clearSessionDraft, getSessionDraft, setSessionDraft } from "@/lib/hermes/drafts";
+import {
+  downloadTextFile,
+  formatSessionJson,
+  formatSessionMarkdown,
+  messageMatchesQuery,
+  safeExportFilename,
+} from "@/lib/hermes/export";
 import { haptic } from "@/lib/hermes/haptics";
 import { setMessages, updateSession, useSession } from "@/lib/hermes/sessions";
 import { mergePulledMessages, pullSession } from "@/lib/hermes/session-sync";
@@ -170,6 +187,10 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const [status, setStatus] = useState<Status>("idle");
   const [live, setLive] = useState<HermesMessage | null>(null);
   const [modelSheet, setModelSheet] = useState(false);
+  const [templateSheet, setTemplateSheet] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterMatchesOnly, setFilterMatchesOnly] = useState(false);
   const abortRef = useRef<{ abort: () => void } | null>(null);
   const { rpc: rpcRef, state: rpcState } = useHermesRpc(config, false);
   const [pulling, setPulling] = useState(false);
@@ -593,6 +614,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         setRunId(null);
         runIdRef.current = null;
         haptic("done");
+        playCompletionChime();
         if (
           document.hidden &&
           "Notification" in window &&
@@ -655,6 +677,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       setModelSheet(true);
       return;
     }
+    clearSessionDraft(config.activeProfile, sessionId);
     haptic("send");
 
     const attachments = await Promise.all(
@@ -708,6 +731,45 @@ export function ChatView({ sessionId }: { sessionId: string }) {
 
   const busy = status === "submitted" || status === "streaming";
   const shown = live ? [...messages, live] : messages;
+  const activeQuery = searchOpen ? searchQuery.trim() : "";
+  const matchedIds = useMemo(() => {
+    if (!activeQuery) return new Set<string>();
+    return new Set(shown.filter((m) => messageMatchesQuery(m, activeQuery)).map((m) => m.id));
+  }, [activeQuery, shown]);
+  const visibleMessages = useMemo(() => {
+    if (!activeQuery || !filterMatchesOnly) return shown;
+    return shown.filter((m) => matchedIds.has(m.id));
+  }, [activeQuery, filterMatchesOnly, matchedIds, shown]);
+
+  const insertIntoComposer = useCallback(
+    (promptText: string) => {
+      setSessionDraft(config.activeProfile, sessionId, promptText);
+      const textarea = document.querySelector(
+        'textarea[name="message"]',
+      ) as HTMLTextAreaElement | null;
+      if (!textarea) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      if (setter) {
+        setter.call(textarea, promptText);
+      } else {
+        textarea.value = promptText;
+      }
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.focus();
+    },
+    [config.activeProfile, sessionId],
+  );
+
+  const exportMeta = {
+    sessionId,
+    title: session?.title ?? "New chat",
+    profile: config.activeProfile,
+    model: activeModel,
+    provider: activeProvider,
+  };
 
   return (
     <AppShell
@@ -724,6 +786,18 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           <Button
             type="button"
             variant="ghost"
+            size="icon"
+            aria-label="Search in session"
+            onClick={() => {
+              haptic("tap");
+              setSearchOpen((v) => !v);
+            }}
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
             size="sm"
             onClick={() => {
               void navigator.clipboard?.writeText(transcriptText(shown));
@@ -732,6 +806,41 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           >
             Copy
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" aria-label="Export session">
+                <Download className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  const md = formatSessionMarkdown(shown, exportMeta);
+                  downloadTextFile(
+                    safeExportFilename(session?.title, "md"),
+                    md,
+                    "text/markdown;charset=utf-8",
+                  );
+                  haptic("done");
+                }}
+              >
+                Export Markdown (.md)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  const json = formatSessionJson(shown, exportMeta);
+                  downloadTextFile(
+                    safeExportFilename(session?.title, "json"),
+                    json,
+                    "application/json;charset=utf-8",
+                  );
+                  haptic("done");
+                }}
+              >
+                Export JSON (.json)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon"
@@ -744,6 +853,50 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       }
     >
       <div className="flex h-full flex-col">
+        {searchOpen && (
+          <div className="border-b border-border/70 bg-secondary/35 px-3 py-2">
+            <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search messages, tools, or thoughts…"
+                  className="h-8 pl-8 text-xs"
+                  autoFocus
+                />
+              </div>
+              {activeQuery && (
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {matchedIds.size} {matchedIds.size === 1 ? "match" : "matches"}
+                </span>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant={filterMatchesOnly ? "default" : "outline"}
+                className="h-8 px-2.5 text-xs"
+                onClick={() => setFilterMatchesOnly((v) => !v)}
+              >
+                Filter
+              </Button>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Close session search"
+                onClick={() => {
+                  setSearchOpen(false);
+                  setSearchQuery("");
+                  setFilterMatchesOnly(false);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
         {!configured && (
           <div className="mx-3 mt-3 rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm">
             <p className="font-medium">Hermes isn't connected yet.</p>
@@ -829,14 +982,27 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                       onCheckedChange={(fastMode) => update({ fastMode })}
                     />
                   </div>
+                  <div className="border-t border-border/60 pt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="w-full gap-1.5 text-xs"
+                      onClick={() => setTemplateSheet(true)}
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                      Headless PC prompt templates
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (
-              shown.map((message) => (
+              visibleMessages.map((message) => (
                 <MessageBubble
                   key={message.id}
                   message={message}
                   live={live?.id === message.id}
+                  highlighted={Boolean(activeQuery) && matchedIds.has(message.id)}
                   onRetry={live?.id === message.id ? undefined : retry}
                   onReact={(emoji) => react(message.id, emoji)}
                 />
@@ -953,6 +1119,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
               className="rounded-2xl"
             >
               <PromptInputTextarea
+                key={`${config.activeProfile}:${sessionId}`}
+                defaultValue={getSessionDraft(config.activeProfile, sessionId)}
+                onChange={(event) =>
+                  setSessionDraft(config.activeProfile, sessionId, event.currentTarget.value)
+                }
                 autoFocus
                 placeholder={configured ? "Message Hermes…" : "Connect Hermes to start"}
                 disabled={!configured || Boolean(pullError)}
@@ -963,6 +1134,12 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                   <AttachmentCameraButton />
                   <AttachmentAddButton />
                   <VoiceDictationButton disabled={!configured || Boolean(pullError)} />
+                  <PromptInputButton
+                    aria-label="Prompt templates"
+                    onClick={() => setTemplateSheet(true)}
+                  >
+                    <Sparkles />
+                  </PromptInputButton>
                   <PromptInputButton aria-label="Model" onClick={() => setModelSheet(true)}>
                     <Cpu />
                     <span className="max-w-24 truncate text-[11px]">
@@ -989,6 +1166,19 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           </div>
         </div>
       </div>
+
+      <PromptTemplateSheet
+        open={templateSheet}
+        onOpenChange={setTemplateSheet}
+        onInsert={insertIntoComposer}
+        onSendNow={
+          configured && !pullError && !busy
+            ? (promptText) => {
+                void send({ text: promptText, files: [] });
+              }
+            : undefined
+        }
+      />
 
       <ModelSheet
         open={modelSheet}

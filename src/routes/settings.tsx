@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { fetchModels, HermesError } from "@/lib/hermes/client";
+import { playCompletionChime } from "@/lib/hermes/chime";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { claimHostAdmin, readHostModel, saveHostModel } from "@/lib/hermes/model-admin";
@@ -1031,6 +1032,33 @@ function NotificationsFields({
             update({ notificationPrefs: { ...prefs, cronFailures } })
           }
         />
+      </div>
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-border/70 p-3">
+        <div>
+          <p className="text-sm font-medium">Completion sound</p>
+          <p className="text-xs text-muted-foreground">
+            Play a subtle two-tone chime when a turn finishes.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-xs"
+            onClick={() => {
+              playCompletionChime(true);
+            }}
+          >
+            Test
+          </Button>
+          <Switch
+            checked={Boolean(prefs.completionChime)}
+            onCheckedChange={(completionChime) =>
+              update({ notificationPrefs: { ...prefs, completionChime } })
+            }
+          />
+        </div>
       </div>
     </div>
   );

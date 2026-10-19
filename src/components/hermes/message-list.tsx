@@ -17,6 +17,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ImageLightbox } from "@/components/hermes/image-lightbox";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
 import { visibleChatText } from "@/lib/hermes/transcript";
@@ -107,42 +108,66 @@ function ToolBlock({ call, expandedByDefault }: { call: ToolCall; expandedByDefa
 }
 
 function Attachments({ message }: { message: HermesMessage }) {
+  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   if (!message.attachments?.length) return null;
   return (
-    <div className="mb-2 flex flex-wrap gap-2">
-      {message.attachments.map((a) =>
-        a.mediaType.startsWith("image/") ? (
-          <img
-            key={a.id}
-            src={a.url}
-            alt={a.name}
-            loading="lazy"
-            className="max-h-48 rounded-xl border border-border/70 object-cover"
-          />
-        ) : (
-          <a
-            key={a.id}
-            href={a.url}
-            download={a.name}
-            className="flex items-center gap-2 rounded-xl border border-border/70 bg-background/40 px-3 py-2 text-xs"
-          >
-            <Paperclip className="h-3.5 w-3.5 text-primary" />
-            <span className="max-w-40 truncate">{a.name}</span>
-          </a>
-        ),
+    <>
+      <div className="mb-2 flex flex-wrap gap-2">
+        {message.attachments.map((a) =>
+          a.mediaType.startsWith("image/") ? (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => {
+                haptic("tap");
+                setPreview({ src: a.url, alt: a.name });
+              }}
+              aria-label={`View ${a.name}`}
+              className="group relative overflow-hidden rounded-xl border border-border/70 text-left focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <img
+                src={a.url}
+                alt={a.name}
+                loading="lazy"
+                className="max-h-48 object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+              />
+            </button>
+          ) : (
+            <a
+              key={a.id}
+              href={a.url}
+              download={a.name}
+              className="flex items-center gap-2 rounded-xl border border-border/70 bg-background/40 px-3 py-2 text-xs"
+            >
+              <Paperclip className="h-3.5 w-3.5 text-primary" />
+              <span className="max-w-40 truncate">{a.name}</span>
+            </a>
+          ),
+        )}
+      </div>
+      {preview && (
+        <ImageLightbox
+          open={Boolean(preview)}
+          onOpenChange={(open) => {
+            if (!open) setPreview(null);
+          }}
+          src={preview.src}
+          alt={preview.alt}
+        />
       )}
-    </div>
+    </>
   );
 }
 
 interface Props {
   message: HermesMessage;
   live?: boolean | undefined;
+  highlighted?: boolean | undefined;
   onRetry?: (() => void) | undefined;
   onReact?: ((emoji: string) => void) | undefined;
 }
 
-export function MessageBubble({ message, live, onRetry, onReact }: Props) {
+export function MessageBubble({ message, live, highlighted, onRetry, onReact }: Props) {
   const { config } = useHermesConfig();
   const [showActions, setShowActions] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -167,7 +192,13 @@ export function MessageBubble({ message, live, onRetry, onReact }: Props) {
   };
 
   return (
-    <Message from={isUser ? "user" : "assistant"} className="[&>div]:max-w-[92%]">
+    <Message
+      from={isUser ? "user" : "assistant"}
+      className={cn(
+        "[&>div]:max-w-[92%]",
+        highlighted && "rounded-2xl bg-primary/10 p-1.5 ring-1 ring-primary/50",
+      )}
+    >
       <div className="min-w-0">
         <MessageContent
           onContextMenu={(e) => {
