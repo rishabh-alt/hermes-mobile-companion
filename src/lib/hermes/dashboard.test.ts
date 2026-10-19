@@ -4,9 +4,12 @@ import {
   dashboardUrlFromGateway,
   mainModelFromConfig,
   normalizeDashboardUrl,
+  parseArchivedSessionsPayload,
   parseDashboardEnvPayload,
   parseHostMemoryPayload,
+  parseHostUpdatePayload,
   parseMemoryFactsPayload,
+  parsePairedDevicesPayload,
   parsePairingInput,
   sanitizePairingUrl,
 } from "./dashboard";
@@ -101,5 +104,65 @@ describe("dashboard address", () => {
     expect(matrix.length).toBeGreaterThanOrEqual(21);
     expect(matrix[0]?.length).toBe(matrix.length);
     expect(() => encodeGatewayAddressQr("http://mac.example.ts.net")).toThrow(/https/i);
+  });
+
+  it("parses paired devices payload from host gateway", () => {
+    expect(
+      parsePairedDevicesPayload({
+        devices: [
+          {
+            id: "dev_pixel",
+            name: "Pixel 9 Pro",
+            platform: "Android",
+            last_seen: "2m ago",
+            current: true,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "dev_pixel",
+        name: "Pixel 9 Pro",
+        platform: "Android",
+        lastSeen: "2m ago",
+        current: true,
+      },
+    ]);
+  });
+
+  it("parses archived sessions list and filters out active sessions", () => {
+    expect(
+      parseArchivedSessionsPayload({
+        sessions: [
+          { id: "s_arch", title: "Old migration log", archived: true, message_count: 12 },
+          { id: "s_live", title: "Current work", archived: false },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "s_arch",
+        title: "Old migration log",
+        messageCount: 12,
+      },
+    ]);
+  });
+
+  it("parses host update check payload and detects available updates", () => {
+    expect(
+      parseHostUpdatePayload({
+        update: {
+          current_version: "0.9.4",
+          latest_version: "0.9.5",
+          commit: "a1b2c3d",
+          can_apply: true,
+        },
+      }),
+    ).toEqual({
+      currentVersion: "0.9.4",
+      latestVersion: "0.9.5",
+      commit: "a1b2c3d",
+      updateAvailable: true,
+      canApply: true,
+    });
   });
 });

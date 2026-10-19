@@ -703,3 +703,334 @@ export async function resetDashboardMemory(baseUrl: string): Promise<void> {
     throw new HermesError("The host did not reset memory.", response.status);
   }
 }
+
+export interface PairedDeviceRow {
+  id: string;
+  name: string;
+  platform?: string | undefined;
+  lastSeen?: string | undefined;
+  current?: boolean | undefined;
+}
+
+export interface GatewayBindInfo {
+  host?: string | undefined;
+  port?: number | undefined;
+  publicUrl?: string | undefined;
+}
+
+export function parsePairedDevicesPayload(payload: unknown): PairedDeviceRow[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const list =
+    root["devices"] ??
+    root["paired_devices"] ??
+    root["tokens"] ??
+    root["clients"] ??
+    (Array.isArray(payload) ? payload : []);
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry, idx) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const id = String(row["id"] ?? row["device_id"] ?? row["token_id"] ?? `dev-${idx + 1}`).trim();
+    if (!id) return [];
+    const name = String(row["name"] ?? row["label"] ?? row["client"] ?? id).trim();
+    const platform =
+      typeof row["platform"] === "string"
+        ? row["platform"]
+        : typeof row["os"] === "string"
+          ? row["os"]
+          : undefined;
+    const lastSeen =
+      typeof row["last_seen"] === "string"
+        ? row["last_seen"]
+        : typeof row["lastSeen"] === "string"
+          ? row["lastSeen"]
+          : typeof row["created_at"] === "string"
+            ? row["created_at"]
+            : undefined;
+    const current = row["current"] === true || row["is_current"] === true;
+    return [
+      {
+        id,
+        name,
+        ...(platform ? { platform } : {}),
+        ...(lastSeen ? { lastSeen } : {}),
+        ...(current ? { current: true } : {}),
+      },
+    ];
+  });
+}
+
+export async function readPairedDevices(baseUrl: string): Promise<{
+  supported: boolean;
+  devices: PairedDeviceRow[];
+  bindInfo?: GatewayBindInfo | undefined;
+}> {
+  let bindInfo: GatewayBindInfo | undefined;
+  const statusRes = await dashboardRequest(baseUrl, "/api/status", "GET").catch(() => null);
+  if (statusRes && statusRes.status >= 200 && statusRes.status < 300 && statusRes.text.trim()) {
+    try {
+      const parsedStatus = JSON.parse(statusRes.text) as Record<string, unknown>;
+      const gw =
+        parsedStatus["gateway"] && typeof parsedStatus["gateway"] === "object"
+          ? (parsedStatus["gateway"] as Record<string, unknown>)
+          : parsedStatus;
+      const host =
+        typeof gw["bind"] === "string"
+          ? gw["bind"]
+          : typeof gw["host"] === "string"
+            ? gw["host"]
+            : undefined;
+      const port = typeof gw["port"] === "number" ? gw["port"] : undefined;
+      const publicUrl =
+        typeof gw["public_url"] === "string"
+          ? gw["public_url"]
+          : typeof gw["url"] === "string"
+            ? gw["url"]
+            : undefined;
+      if (host || port || publicUrl) {
+        bindInfo = {
+          ...(host ? { host } : {}),
+          ...(port !== undefined ? { port } : {}),
+          ...(publicUrl ? { publicUrl } : {}),
+        };
+      }
+    } catch {
+      // Ignore malformed status bind payload
+    }
+  }
+
+  let response = await dashboardRequest(baseUrl, "/api/gateway/devices", "GET");
+  if (response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/pairing/devices", "GET");
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status === 404) {
+    return { supported: false, devices: [], ...(bindInfo ? { bindInfo } : {}) };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not return paired devices.", response.status);
+  }
+  const parsed = response.text.trim() ? (JSON.parse(response.text) as unknown) : {};
+  return {
+    supported: true,
+    devices: parsePairedDevicesPayload(parsed),
+    ...(bindInfo ? { bindInfo } : {}),
+  };
+}
+
+export async function revokePairedDevice(baseUrl: string, deviceId: string): Promise<void> {
+  const cleanId = deviceId.trim();
+  if (!cleanId) throw new Error("Device ID is required.");
+  let response = await dashboardRequest(
+    baseUrl,
+    `/api/gateway/devices/${encodeURIComponent(cleanId)}`,
+    "DELETE",
+  );
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(baseUrl, "/api/pairing/revoke", "POST", {
+      id: cleanId,
+      device_id: cleanId,
+    });
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host refused to revoke that device.", response.status);
+  }
+}
+
+export interface ArchivedSessionRow {
+  id: string;
+  title: string;
+  updatedAt?: string | undefined;
+  messageCount?: number | undefined;
+}
+
+export function parseArchivedSessionsPayload(payload: unknown): ArchivedSessionRow[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const list =
+    root["archived"] ?? root["sessions"] ?? root["data"] ?? (Array.isArray(payload) ? payload : []);
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const id = String(row["id"] ?? row["session_id"] ?? "").trim();
+    if (!id) return [];
+    if (
+      "archived" in row &&
+      row["archived"] === false &&
+      !("archived" in root) &&
+      row["status"] !== "archived"
+    ) {
+      return [];
+    }
+    const title = String(row["title"] ?? row["name"] ?? id).trim() || id;
+    const updatedAt =
+      typeof row["updated_at"] === "string"
+        ? row["updated_at"]
+        : typeof row["updatedAt"] === "string"
+          ? row["updatedAt"]
+          : typeof row["archived_at"] === "string"
+            ? row["archived_at"]
+            : undefined;
+    const rawCount = row["message_count"] ?? row["messageCount"] ?? row["messages_count"];
+    const messageCount = typeof rawCount === "number" ? rawCount : undefined;
+    return [
+      {
+        id,
+        title,
+        ...(updatedAt ? { updatedAt } : {}),
+        ...(messageCount !== undefined ? { messageCount } : {}),
+      },
+    ];
+  });
+}
+
+export async function readArchivedSessions(baseUrl: string): Promise<{
+  supported: boolean;
+  sessions: ArchivedSessionRow[];
+}> {
+  let response = await dashboardRequest(baseUrl, "/api/sessions/archived", "GET");
+  if (response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/sessions?archived=true", "GET");
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status === 404) {
+    return { supported: false, sessions: [] };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not return archived sessions.", response.status);
+  }
+  const parsed = response.text.trim() ? (JSON.parse(response.text) as unknown) : {};
+  return {
+    supported: true,
+    sessions: parseArchivedSessionsPayload(parsed),
+  };
+}
+
+export async function restoreArchivedSession(baseUrl: string, sessionId: string): Promise<void> {
+  const cleanId = sessionId.trim();
+  if (!cleanId) throw new Error("Session ID is required.");
+  let response = await dashboardRequest(
+    baseUrl,
+    `/api/sessions/${encodeURIComponent(cleanId)}/restore`,
+    "POST",
+    {},
+  );
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(
+      baseUrl,
+      `/api/sessions/${encodeURIComponent(cleanId)}`,
+      "PATCH",
+      { archived: false, status: "active" },
+    );
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not restore that session.", response.status);
+  }
+}
+
+export async function deleteArchivedSession(baseUrl: string, sessionId: string): Promise<void> {
+  const cleanId = sessionId.trim();
+  if (!cleanId) throw new Error("Session ID is required.");
+  const response = await dashboardRequest(
+    baseUrl,
+    `/api/sessions/${encodeURIComponent(cleanId)}`,
+    "DELETE",
+  );
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not delete that session.", response.status);
+  }
+}
+
+export interface HostUpdateInfo {
+  currentVersion: string;
+  latestVersion?: string | undefined;
+  commit?: string | undefined;
+  updateAvailable: boolean;
+  canApply: boolean;
+  releaseNotes?: string | undefined;
+}
+
+export function parseHostUpdatePayload(payload: unknown): HostUpdateInfo {
+  const root =
+    payload && typeof payload !== "string" && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : {};
+  const update =
+    root["update"] && typeof root["update"] === "object"
+      ? (root["update"] as Record<string, unknown>)
+      : root;
+  const currentVersion = String(
+    update["current_version"] ??
+      update["version"] ??
+      root["version"] ??
+      root["hermes_version"] ??
+      "unknown",
+  ).trim();
+  const latestRaw =
+    update["latest_version"] ?? update["latest"] ?? update["available_version"] ?? undefined;
+  const latestVersion =
+    typeof latestRaw === "string" && latestRaw.trim() ? latestRaw.trim() : undefined;
+  const commitRaw = update["commit"] ?? update["git_sha"] ?? root["commit"] ?? root["git_sha"];
+  const commit = typeof commitRaw === "string" && commitRaw.trim() ? commitRaw.trim() : undefined;
+  const updateAvailable =
+    update["update_available"] === true ||
+    update["has_update"] === true ||
+    Boolean(latestVersion && currentVersion !== "unknown" && latestVersion !== currentVersion);
+  const canApply =
+    update["can_apply"] === true || update["self_update"] === true || updateAvailable;
+  const notesRaw = update["release_notes"] ?? update["changelog"] ?? update["notes"];
+  const releaseNotes =
+    typeof notesRaw === "string" && notesRaw.trim() ? notesRaw.trim() : undefined;
+
+  return {
+    currentVersion,
+    ...(latestVersion ? { latestVersion } : {}),
+    ...(commit ? { commit } : {}),
+    updateAvailable,
+    canApply,
+    ...(releaseNotes ? { releaseNotes } : {}),
+  };
+}
+
+export async function checkHostUpdate(baseUrl: string): Promise<HostUpdateInfo> {
+  let response = await dashboardRequest(baseUrl, "/api/update/check", "GET");
+  if (response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/status", "GET");
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not return version or update status.", response.status);
+  }
+  const parsed = response.text.trim() ? (JSON.parse(response.text) as unknown) : {};
+  return parseHostUpdatePayload(parsed);
+}
+
+export async function applyHostUpdate(baseUrl: string): Promise<{ message: string }> {
+  let response = await dashboardRequest(baseUrl, "/api/update/apply", "POST", {});
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(baseUrl, "/api/system/upgrade", "POST", {});
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status === 404) {
+    throw new HermesError(
+      "This host does not expose remote self-update over /api/update/apply yet.",
+      404,
+    );
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host refused to apply that update.", response.status);
+  }
+  try {
+    const parsed = JSON.parse(response.text) as Record<string, unknown>;
+    const msg = parsed["message"] ?? parsed["status"];
+    if (typeof msg === "string" && msg.trim()) return { message: msg.trim() };
+  } catch {
+    // Default message below
+  }
+  return { message: "Update started on the headless host. Gateway is restarting…" };
+}

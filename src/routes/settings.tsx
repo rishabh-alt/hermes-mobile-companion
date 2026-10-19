@@ -21,17 +21,28 @@ import { note } from "@/lib/hermes/debug-log";
 import { DashboardPanel } from "@/components/hermes/dashboard-panel";
 import { DashboardFields } from "@/components/hermes/dashboard-fields";
 import {
+  applyHostUpdate,
+  checkHostUpdate,
   correctDashboardMemoryFact,
   dashboardUrlFromGateway,
+  deleteArchivedSession,
   exchangePairingCode,
   parsePairingInput,
+  readArchivedSessions,
   readDashboardEnvKeys,
   readDashboardMemoryStatus,
+  readPairedDevices,
   resetDashboardMemory,
+  restoreArchivedSession,
+  revokePairedDevice,
   saveDashboardEnvKey,
+  type ArchivedSessionRow,
   type DashboardEnvKeyStatus,
+  type GatewayBindInfo,
   type HostMemoryStatus,
+  type HostUpdateInfo,
   type MemoryFactItem,
+  type PairedDeviceRow,
 } from "@/lib/hermes/dashboard";
 import { encodeGatewayAddressQr } from "@/lib/hermes/qr";
 import { nativeGet } from "@/lib/hermes/native-get";
@@ -282,6 +293,12 @@ function SettingsRoute() {
                         <div className="space-y-4">
                           {section.id === "memory" && (
                             <DashboardMemoryPanel baseUrl={effectiveDashboardUrl} />
+                          )}
+                          {section.id === "gateway" && (
+                            <DashboardGatewayDevicesPanel baseUrl={effectiveDashboardUrl} />
+                          )}
+                          {section.id === "sessions" && (
+                            <DashboardArchivedSessionsPanel baseUrl={effectiveDashboardUrl} />
                           )}
                           <DashboardFields baseUrl={effectiveDashboardUrl} sectionId={section.id} />
                           {(section.id === "providers" || section.id === "tools") && (
@@ -1079,12 +1096,45 @@ function AboutFields({
   checking: boolean;
   onCheck: () => void;
 }) {
+  const [updateInfo, setUpdateInfo] = useState<HostUpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [confirmApply, setConfirmApply] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
+
+  const runUpdateCheck = async () => {
+    if (!dashboardUrl) return;
+    setCheckingUpdate(true);
+    setUpdateNote(null);
+    try {
+      const info = await checkHostUpdate(dashboardUrl);
+      setUpdateInfo(info);
+      setUpdateNote(
+        info.updateAvailable
+          ? `Newer release available (${info.latestVersion ?? "update ready"}).`
+          : "Headless host is running the latest reported release.",
+      );
+      haptic("done");
+    } catch (err) {
+      haptic("error");
+      setUpdateNote(
+        err instanceof Error ? err.message : "Could not check host version on the dashboard.",
+      );
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="space-y-1.5 rounded-xl border border-border/70 p-3 text-xs">
         <p className="text-sm font-medium text-foreground">Hermes Companion</p>
         <p className="text-muted-foreground">
           Active profile: <span className="font-mono text-foreground">{config.activeProfile}</span>
+        </p>
+        <p className="text-muted-foreground">
+          Active model:{" "}
+          <span className="font-mono text-foreground">{config.model || "not selected"}</span>
         </p>
         <p className="text-muted-foreground">
           Gateway: <span className="font-mono text-foreground">{config.baseUrl || "not set"}</span>
@@ -1098,6 +1148,106 @@ function AboutFields({
           Transport: SSE fetch streaming · Native HTTP Dashboard
         </p>
       </div>
+
+      <div className="space-y-2.5 rounded-xl border border-border/70 p-3 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-foreground">Host Hermes release</p>
+            <p className="text-muted-foreground">
+              {updateInfo ? (
+                <>
+                  Version{" "}
+                  <span className="font-mono text-foreground">{updateInfo.currentVersion}</span>
+                  {updateInfo.commit ? ` (${updateInfo.commit.slice(0, 7)})` : ""}
+                  {updateInfo.latestVersion ? ` → Latest: ${updateInfo.latestVersion}` : ""}
+                </>
+              ) : (
+                "Check the headless host's Hermes version and available updates."
+              )}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={checkingUpdate || !dashboardUrl || !dashboardReady}
+            onClick={() => void runUpdateCheck()}
+          >
+            {checkingUpdate ? "Checking…" : "Check update"}
+          </Button>
+        </div>
+
+        {updateInfo?.releaseNotes && (
+          <p className="rounded-lg bg-secondary/40 p-2 text-[11px] text-muted-foreground">
+            {updateInfo.releaseNotes}
+          </p>
+        )}
+
+        {updateInfo?.canApply && (
+          <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-2">
+            <span className="text-[11px] text-muted-foreground">
+              {updateInfo.updateAvailable
+                ? "Apply update and restart the headless gateway."
+                : "Re-run host upgrade check & restart."}
+            </span>
+            {!confirmApply ? (
+              <Button
+                type="button"
+                size="sm"
+                variant={updateInfo.updateAvailable ? "default" : "outline"}
+                onClick={() => setConfirmApply(true)}
+              >
+                Upgrade host
+              </Button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={applyingUpdate}
+                  onClick={async () => {
+                    setApplyingUpdate(true);
+                    setUpdateNote(null);
+                    try {
+                      const res = await applyHostUpdate(dashboardUrl);
+                      setConfirmApply(false);
+                      setUpdateNote(res.message);
+                      haptic("done");
+                    } catch (err) {
+                      haptic("error");
+                      setUpdateNote(
+                        err instanceof Error
+                          ? err.message
+                          : "The host refused the upgrade request.",
+                      );
+                    } finally {
+                      setApplyingUpdate(false);
+                    }
+                  }}
+                >
+                  {applyingUpdate ? "Applying…" : "Confirm upgrade"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmApply(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!dashboardReady && (
+          <p className="text-[11px] text-muted-foreground">
+            Sign in to the Dashboard in Connection to check or apply host updates.
+          </p>
+        )}
+        {updateNote && <p className="text-xs text-muted-foreground">{updateNote}</p>}
+      </div>
+
       <Button
         type="button"
         variant="outline"
@@ -1585,6 +1735,298 @@ function ModelAdminPanel({
         </Button>
       </div>
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
+    </div>
+  );
+}
+
+function DashboardGatewayDevicesPanel({ baseUrl }: { baseUrl: string }) {
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [devices, setDevices] = useState<PairedDeviceRow[]>([]);
+  const [bindInfo, setBindInfo] = useState<GatewayBindInfo | undefined>(undefined);
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [noteText, setNoteText] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void readPairedDevices(baseUrl)
+      .then((res) => {
+        if (!active) return;
+        setSupported(res.supported);
+        setDevices(res.devices);
+        setBindInfo(res.bindInfo);
+      })
+      .catch(() => {
+        if (active) setSupported(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl]);
+
+  const reload = async () => {
+    try {
+      const res = await readPairedDevices(baseUrl);
+      setSupported(res.supported);
+      setDevices(res.devices);
+      setBindInfo(res.bindInfo);
+    } catch {
+      // Keep current state
+    }
+  };
+
+  if (supported === null) return null;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/70 p-3">
+      {bindInfo && (bindInfo.host || bindInfo.port || bindInfo.publicUrl) && (
+        <div className="space-y-1 border-b border-border/50 pb-2.5 text-xs">
+          <p className="font-medium text-foreground">Host listener &amp; reachability</p>
+          <p className="font-mono text-[11px] text-muted-foreground">
+            {bindInfo.host ?? "0.0.0.0"}
+            {bindInfo.port !== undefined ? `:${bindInfo.port}` : ""}
+            {bindInfo.publicUrl ? ` · ${bindInfo.publicUrl}` : ""}
+          </p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Paired devices</p>
+          <p className="text-xs text-muted-foreground">
+            {!supported
+              ? "This host does not expose a paired-device inventory endpoint yet."
+              : devices.length === 0
+                ? "No paired client tokens reported by the host."
+                : `${devices.length} paired ${devices.length === 1 ? "device" : "devices"}`}
+          </p>
+        </div>
+        {supported && (
+          <Button type="button" size="sm" variant="outline" onClick={() => void reload()}>
+            Refresh
+          </Button>
+        )}
+      </div>
+
+      {supported && devices.length > 0 && (
+        <ul className="space-y-2">
+          {devices.map((dev) => (
+            <li
+              key={dev.id}
+              className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">
+                  {dev.name} {dev.current ? "(this phone)" : ""}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {[dev.platform, dev.lastSeen].filter(Boolean).join(" · ") || dev.id}
+                </p>
+              </div>
+              {confirmRevokeId !== dev.id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-[11px]"
+                  onClick={() => setConfirmRevokeId(dev.id)}
+                >
+                  Revoke
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      setNoteText(null);
+                      try {
+                        await revokePairedDevice(baseUrl, dev.id);
+                        setConfirmRevokeId(null);
+                        setNoteText(`Revoked ${dev.name}.`);
+                        await reload();
+                        haptic("done");
+                      } catch (err) {
+                        haptic("error");
+                        setNoteText(
+                          err instanceof Error ? err.message : "Could not revoke that device.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => setConfirmRevokeId(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </div>
+  );
+}
+
+function DashboardArchivedSessionsPanel({ baseUrl }: { baseUrl: string }) {
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [sessions, setSessions] = useState<ArchivedSessionRow[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [noteText, setNoteText] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void readArchivedSessions(baseUrl)
+      .then((res) => {
+        if (!active) return;
+        setSupported(res.supported);
+        setSessions(res.sessions);
+      })
+      .catch(() => {
+        if (active) setSupported(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl]);
+
+  const reload = async () => {
+    try {
+      const res = await readArchivedSessions(baseUrl);
+      setSupported(res.supported);
+      setSessions(res.sessions);
+    } catch {
+      // Keep current state
+    }
+  };
+
+  if (supported === null) return null;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/70 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Archived chats on host</p>
+          <p className="text-xs text-muted-foreground">
+            {!supported
+              ? "This host does not expose archived session listing yet."
+              : sessions.length === 0
+                ? "No archived conversations on the host."
+                : `${sessions.length} archived ${sessions.length === 1 ? "chat" : "chats"}`}
+          </p>
+        </div>
+        {supported && (
+          <Button type="button" size="sm" variant="outline" onClick={() => void reload()}>
+            Refresh
+          </Button>
+        )}
+      </div>
+
+      {supported && sessions.length > 0 && (
+        <ul className="max-h-60 space-y-2 overflow-y-auto pr-1">
+          {sessions.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">{item.title}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {[
+                    item.messageCount !== undefined ? `${item.messageCount} msgs` : null,
+                    item.updatedAt,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || item.id}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[11px]"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setNoteText(null);
+                    try {
+                      await restoreArchivedSession(baseUrl, item.id);
+                      setNoteText(`Restored "${item.title}".`);
+                      await reload();
+                      haptic("done");
+                    } catch (err) {
+                      haptic("error");
+                      setNoteText(
+                        err instanceof Error ? err.message : "Could not restore that session.",
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Restore
+                </Button>
+                {confirmDeleteId !== item.id ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                    onClick={() => setConfirmDeleteId(item.id)}
+                  >
+                    Delete
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      setNoteText(null);
+                      try {
+                        await deleteArchivedSession(baseUrl, item.id);
+                        setConfirmDeleteId(null);
+                        setNoteText(`Deleted "${item.title}" from host.`);
+                        await reload();
+                        haptic("done");
+                      } catch (err) {
+                        haptic("error");
+                        setNoteText(
+                          err instanceof Error ? err.message : "Could not delete that session.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Confirm
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
     </div>
   );
 }
