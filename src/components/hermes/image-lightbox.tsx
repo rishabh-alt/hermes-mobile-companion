@@ -57,12 +57,21 @@ export function ImageLightbox({ open, onOpenChange, src, alt }: Props) {
           </div>
         </DialogHeader>
 
-        <div className="flex max-h-[76dvh] items-center justify-center overflow-auto rounded-2xl bg-black/50 p-2">
+        <div
+          className={
+            zoom > 1
+              ? "flex max-h-[76dvh] items-start justify-start overflow-auto rounded-2xl bg-black/50 p-2"
+              : "flex max-h-[76dvh] items-center justify-center overflow-auto rounded-2xl bg-black/50 p-2"
+          }
+        >
           <img
             src={src}
             alt={alt}
             onClick={cycleZoom}
-            style={{ transform: `scale(${zoom})`, transformOrigin: "center center" }}
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: zoom > 1 ? "top left" : "center center",
+            }}
             className="max-h-[72dvh] max-w-full cursor-zoom-in rounded-lg object-contain transition-transform duration-200"
           />
         </div>

@@ -124,27 +124,38 @@ export function parsePhoneConfigBackup(rawJson: string): {
     patch.showReasoning = sourceConfig["showReasoning"];
   }
   if (Array.isArray(sourceConfig["savedHosts"])) {
-    patch.savedHosts = sourceConfig["savedHosts"].flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
+    patch.savedHosts = sourceConfig["savedHosts"].map((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error(`Invalid backup savedHosts entry at index ${index}.`);
+      }
       const row = item as Record<string, unknown>;
       const id = String(row["id"] ?? "").trim();
       const label = String(row["label"] ?? "").trim();
       const baseUrl = String(row["baseUrl"] ?? "").trim();
-      if (!id || !label || !isSecureBaseUrl(baseUrl)) return [];
-      return [
-        {
-          id,
-          label,
-          baseUrl,
-          dashboardBaseUrl: String(row["dashboardBaseUrl"] ?? ""),
-          ...(typeof row["activeProfile"] === "string"
-            ? { activeProfile: row["activeProfile"] }
-            : {}),
-          ...(typeof row["profilePathPrefix"] === "string"
-            ? { profilePathPrefix: row["profilePathPrefix"] }
-            : {}),
-        },
-      ];
+      const dashboardBaseUrl = String(row["dashboardBaseUrl"] ?? "").trim();
+      if (!id || !label || !baseUrl) {
+        throw new Error(
+          `Backup savedHosts entry "${label || id || `#${index + 1}`}" is missing id, label, or baseUrl.`,
+        );
+      }
+      if (!isSecureBaseUrl(baseUrl)) {
+        throw new Error(`Backup savedHosts entry "${label}" baseUrl must use https://.`);
+      }
+      if (dashboardBaseUrl && !isSecureBaseUrl(dashboardBaseUrl)) {
+        throw new Error(`Backup savedHosts entry "${label}" dashboardBaseUrl must use https://.`);
+      }
+      return {
+        id,
+        label,
+        baseUrl,
+        dashboardBaseUrl,
+        ...(typeof row["activeProfile"] === "string"
+          ? { activeProfile: row["activeProfile"] }
+          : {}),
+        ...(typeof row["profilePathPrefix"] === "string"
+          ? { profilePathPrefix: row["profilePathPrefix"] }
+          : {}),
+      };
     });
   }
 

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { haptic } from "@/lib/hermes/haptics";
 import {
+  getPinLockoutRemainingMs,
   isAppCurrentlyLocked,
   lockAppNow,
   readAppLockRecord,
@@ -42,12 +43,25 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     setErrorText(null);
+    const remainingMs = getPinLockoutRemainingMs();
+    if (remainingMs > 0) {
+      haptic("error");
+      setErrorText(
+        `Too many failed attempts. Try again in ${Math.ceil(remainingMs / 1000)}s or use biometrics.`,
+      );
+      return;
+    }
     if (verifyAndUnlockPin(pin)) {
       setPin("");
       haptic("done");
     } else {
       haptic("error");
-      setErrorText("Incorrect PIN. Try again.");
+      const nextLockoutMs = getPinLockoutRemainingMs();
+      setErrorText(
+        nextLockoutMs > 0
+          ? `Too many failed attempts. Locked for ${Math.ceil(nextLockoutMs / 1000)}s.`
+          : "Incorrect PIN. Try again.",
+      );
     }
   };
 

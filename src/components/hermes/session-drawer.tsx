@@ -76,13 +76,27 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const navigate = useNavigate();
   const compact = config.drawerDensity === "compact";
 
+  const SESSION_POLL_MS = 15_000;
+
   useEffect(() => {
-    const onVisible = () => {
+    const refreshIfVisible = () => {
       if (document.visibilityState === "visible") remote.refresh();
     };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [remote.refresh]);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+    if (!configured) {
+      return () => {
+        document.removeEventListener("visibilitychange", refreshIfVisible);
+        window.removeEventListener("focus", refreshIfVisible);
+      };
+    }
+    const timer = window.setInterval(refreshIfVisible, SESSION_POLL_MS);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+    };
+  }, [configured, remote.refresh]);
 
   const remoteRows = remote.data ?? [];
   const remoteIds = new Set(remoteRows.map((item) => item.id));

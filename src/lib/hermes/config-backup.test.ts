@@ -65,6 +65,42 @@ describe("phone config backup & restore", () => {
     expect(() =>
       parsePhoneConfigBackup(JSON.stringify({ config: { baseUrl: "http://pc.example.ts.net" } })),
     ).toThrow(/https/i);
+
+    expect(() =>
+      parsePhoneConfigBackup(
+        JSON.stringify({
+          config: {
+            baseUrl: "https://pc.example.ts.net",
+            savedHosts: [
+              {
+                id: "host-1",
+                label: "Insecure Host",
+                baseUrl: "http://insecure.example.ts.net",
+                dashboardBaseUrl: "",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow(/savedHosts.*https/i);
+
+    expect(() =>
+      parsePhoneConfigBackup(
+        JSON.stringify({
+          config: {
+            baseUrl: "https://pc.example.ts.net",
+            savedHosts: [
+              {
+                id: "host-1",
+                label: "Insecure Dashboard",
+                baseUrl: "https://pc.example.ts.net",
+                dashboardBaseUrl: "http://pc.example.ts.net:8642",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow(/savedHosts.*https/i);
   });
 
   it("applies a valid backup and resets to defaults while preserving existing runtime token on import", () => {

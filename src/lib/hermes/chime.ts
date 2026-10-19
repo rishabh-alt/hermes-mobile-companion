@@ -1,8 +1,10 @@
 import { readConfig } from "./config";
 
 interface MinimalAudioContext {
+  state?: "suspended" | "running" | "closed" | string;
   currentTime: number;
   destination: unknown;
+  resume?: () => Promise<void>;
   createOscillator: () => {
     type: string;
     frequency: { setValueAtTime: (value: number, time: number) => void };
@@ -20,8 +22,60 @@ interface MinimalAudioContext {
   close?: () => Promise<void>;
 }
 
+let sharedContext: MinimalAudioContext | null = null;
+let gestureListenersInstalled = false;
+
+function getAudioConstructor(): (new () => MinimalAudioContext) | undefined {
+  if (typeof window === "undefined") return undefined;
+  const win = window as unknown as {
+    AudioContext?: new () => MinimalAudioContext;
+    webkitAudioContext?: new () => MinimalAudioContext;
+  };
+  return win.AudioContext ?? win.webkitAudioContext;
+}
+
+function getOrCreateAudioContext(): MinimalAudioContext | null {
+  const AudioCtor = getAudioConstructor();
+  if (!AudioCtor) return null;
+  if (sharedContext && sharedContext.state !== "closed") {
+    return sharedContext;
+  }
+  try {
+    sharedContext = new AudioCtor();
+    return sharedContext;
+  } catch {
+    return null;
+  }
+}
+
+export function resetCompletionChimeAudioForTest(): void {
+  sharedContext = null;
+  gestureListenersInstalled = false;
+}
+
+export function unlockAudioContextOnGesture(): void {
+  if (typeof window === "undefined" || gestureListenersInstalled) return;
+  if (typeof window.addEventListener !== "function") return;
+  gestureListenersInstalled = true;
+
+  const unlock = () => {
+    const ctx = getOrCreateAudioContext();
+    if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
+      void ctx.resume().catch(() => undefined);
+    }
+  };
+
+  window.addEventListener("pointerdown", unlock, { passive: true });
+  window.addEventListener("touchstart", unlock, { passive: true });
+  window.addEventListener("keydown", unlock, { passive: true });
+}
+
+// Install gesture listeners eagerly in browser environments so the shared AudioContext
+// is unlocked on the user's first tap/keypress before a background turn finishes.
+unlockAudioContextOnGesture();
+
 /**
- * Plays a subtle, pleasant two-note completion chime using the Web Audio API.
+ * Plays a subtle, pleasant two-note completion chime using a shared Web Audio API context.
  * Safe in headless/test environments and requires zero external audio assets.
  */
 export function playCompletionChime(force = false): boolean {
@@ -31,15 +85,15 @@ export function playCompletionChime(force = false): boolean {
     if (!config.notificationPrefs?.completionChime) return false;
   }
 
-  const win = window as unknown as {
-    AudioContext?: new () => MinimalAudioContext;
-    webkitAudioContext?: new () => MinimalAudioContext;
-  };
-  const AudioCtor = win.AudioContext ?? win.webkitAudioContext;
-  if (!AudioCtor) return false;
+  unlockAudioContextOnGesture();
+  const ctx = getOrCreateAudioContext();
+  if (!ctx) return false;
 
   try {
-    const ctx = new AudioCtor();
+    if (ctx.state === "suspended" && typeof ctx.resume === "function") {
+      void ctx.resume().catch(() => undefined);
+    }
+
     const now = ctx.currentTime;
     const notes: Array<[number, number, number]> = [
       [587.33, 0, 0.14], // D5
@@ -59,11 +113,6 @@ export function playCompletionChime(force = false): boolean {
       osc.stop(now + offset + duration);
     }
 
-    if (typeof ctx.close === "function") {
-      setTimeout(() => {
-        void ctx.close?.().catch(() => undefined);
-      }, 450);
-    }
     return true;
   } catch {
     return false;
