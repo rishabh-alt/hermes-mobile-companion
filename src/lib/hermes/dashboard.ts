@@ -1034,3 +1034,124 @@ export async function applyHostUpdate(baseUrl: string): Promise<{ message: strin
   }
   return { message: "Update started on the headless host. Gateway is restarting…" };
 }
+
+export interface VaultCredentialRow {
+  id: string;
+  domain: string;
+  username: string;
+  updatedAt?: string | undefined;
+}
+
+export function parseVaultCredentialsPayload(payload: unknown): VaultCredentialRow[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const list =
+    root["credentials"] ??
+    root["vault"] ??
+    root["entries"] ??
+    root["items"] ??
+    (Array.isArray(payload) ? payload : []);
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry, idx) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const domain = String(
+      row["domain"] ?? row["site"] ?? row["host"] ?? row["service"] ?? row["name"] ?? "",
+    ).trim();
+    if (!domain) return [];
+    const id = String(row["id"] ?? `${domain}-${idx + 1}`).trim();
+    const username = String(row["username"] ?? row["user"] ?? row["account"] ?? "").trim();
+    const updatedAt =
+      typeof row["updated_at"] === "string"
+        ? row["updated_at"]
+        : typeof row["updatedAt"] === "string"
+          ? row["updatedAt"]
+          : undefined;
+    return [
+      {
+        id,
+        domain,
+        username,
+        ...(updatedAt ? { updatedAt } : {}),
+      },
+    ];
+  });
+}
+
+export async function readDashboardVaultCredentials(baseUrl: string): Promise<{
+  supported: boolean;
+  locked?: boolean | undefined;
+  credentials: VaultCredentialRow[];
+}> {
+  let response = await dashboardRequest(baseUrl, "/api/vault/credentials", "GET");
+  if (response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/browser/credentials", "GET");
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status === 404) {
+    return { supported: false, credentials: [] };
+  }
+  if (response.status === 423) {
+    return { supported: true, locked: true, credentials: [] };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not return credential vault entries.", response.status);
+  }
+  const parsed = response.text.trim() ? (JSON.parse(response.text) as unknown) : {};
+  const locked = Boolean(
+    parsed && typeof parsed === "object" && (parsed as Record<string, unknown>)["locked"],
+  );
+  return {
+    supported: true,
+    ...(locked ? { locked: true } : {}),
+    credentials: parseVaultCredentialsPayload(parsed),
+  };
+}
+
+export async function addDashboardVaultCredential(
+  baseUrl: string,
+  input: { domain: string; username: string; secret: string },
+): Promise<void> {
+  const domain = input.domain.trim();
+  const username = input.username.trim();
+  const secret = input.secret;
+  if (!domain || !secret) {
+    throw new Error("Domain/service and password/secret are required.");
+  }
+  if (isRedacted(secret)) {
+    throw new Error("Paste the real secret, not a masked placeholder.");
+  }
+  const body = { domain, username, password: secret, secret };
+  let response = await dashboardRequest(baseUrl, "/api/vault/credentials", "POST", body);
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(baseUrl, "/api/browser/credentials", "POST", body);
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not save that vault credential.", response.status);
+  }
+}
+
+export async function revokeDashboardVaultCredential(
+  baseUrl: string,
+  credentialId: string,
+): Promise<void> {
+  const cleanId = credentialId.trim();
+  if (!cleanId) throw new Error("Credential ID is required.");
+  let response = await dashboardRequest(
+    baseUrl,
+    `/api/vault/credentials/${encodeURIComponent(cleanId)}`,
+    "DELETE",
+  );
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(
+      baseUrl,
+      `/api/browser/credentials/${encodeURIComponent(cleanId)}`,
+      "DELETE",
+    );
+  }
+  if (response.status === 401) throw new HermesError("Sign in to the dashboard again.", 401);
+  if (response.status < 200 || response.status >= 300) {
+    throw new HermesError("The host did not revoke that vault credential.", response.status);
+  }
+}

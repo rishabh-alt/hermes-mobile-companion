@@ -21,6 +21,21 @@ import { note } from "@/lib/hermes/debug-log";
 import { DashboardPanel } from "@/components/hermes/dashboard-panel";
 import { DashboardFields } from "@/components/hermes/dashboard-fields";
 import {
+  configureAppLockPin,
+  disableAppLock,
+  enrollBiometricLock,
+  isAppLockConfigured,
+  lockAppNow,
+  readAppLockRecord,
+} from "@/lib/hermes/app-lock";
+import {
+  applyPhoneConfigBackup,
+  createPhoneConfigBackup,
+  resetPhoneConfigToDefaults,
+} from "@/lib/hermes/config-backup";
+import { downloadTextFile } from "@/lib/hermes/export";
+import {
+  addDashboardVaultCredential,
   applyHostUpdate,
   checkHostUpdate,
   correctDashboardMemoryFact,
@@ -31,9 +46,11 @@ import {
   readArchivedSessions,
   readDashboardEnvKeys,
   readDashboardMemoryStatus,
+  readDashboardVaultCredentials,
   readPairedDevices,
   resetDashboardMemory,
   restoreArchivedSession,
+  revokeDashboardVaultCredential,
   revokePairedDevice,
   saveDashboardEnvKey,
   type ArchivedSessionRow,
@@ -43,6 +60,7 @@ import {
   type HostUpdateInfo,
   type MemoryFactItem,
   type PairedDeviceRow,
+  type VaultCredentialRow,
 } from "@/lib/hermes/dashboard";
 import { encodeGatewayAddressQr } from "@/lib/hermes/qr";
 import { nativeGet } from "@/lib/hermes/native-get";
@@ -293,6 +311,9 @@ function SettingsRoute() {
                         <div className="space-y-4">
                           {section.id === "memory" && (
                             <DashboardMemoryPanel baseUrl={effectiveDashboardUrl} />
+                          )}
+                          {section.id === "browser" && (
+                            <DashboardCredentialVaultPanel baseUrl={effectiveDashboardUrl} />
                           )}
                           {section.id === "gateway" && (
                             <DashboardGatewayDevicesPanel baseUrl={effectiveDashboardUrl} />
@@ -826,6 +847,7 @@ function ConnectionFields({
       <Button asChild variant="outline" className="w-full">
         <Link to="/debug">Debug log</Link>
       </Button>
+      <PhoneConfigBackupCard config={config} />
     </div>
   );
 }
@@ -965,6 +987,7 @@ function AppearanceFields({
           ))}
         </div>
       </div>
+      <AppLockSettingsCard />
     </div>
   );
 }
@@ -2022,6 +2045,419 @@ function DashboardArchivedSessionsPanel({ baseUrl }: { baseUrl: string }) {
                   </Button>
                 )}
               </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </div>
+  );
+}
+
+function PhoneConfigBackupCard({
+  config,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [noteText, setNoteText] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
+      <div>
+        <p className="text-xs font-medium">Phone config backup &amp; reset</p>
+        <p className="text-[11px] text-muted-foreground">
+          Exports non-secret phone settings and custom prompt templates. Tokens and passwords are
+          never included.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs"
+          onClick={() => {
+            const json = createPhoneConfigBackup(config);
+            downloadTextFile("hermes-phone-config.json", json, "application/json;charset=utf-8");
+            setNoteText("Exported hermes-phone-config.json (zero tokens included).");
+            haptic("done");
+          }}
+        >
+          Export config
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Import config
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={async (event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (!file) return;
+            try {
+              const raw = await file.text();
+              applyPhoneConfigBackup(raw);
+              setNoteText("Imported phone settings from backup.");
+              haptic("done");
+            } catch (err) {
+              haptic("error");
+              setNoteText(err instanceof Error ? err.message : "Could not import backup file.");
+            }
+          }}
+        />
+        {!confirmReset ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 text-xs text-muted-foreground hover:text-destructive"
+            onClick={() => setConfirmReset(true)}
+          >
+            Reset to defaults
+          </Button>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="h-8 text-xs"
+              onClick={() => {
+                resetPhoneConfigToDefaults();
+                setConfirmReset(false);
+                setNoteText("Reset phone settings to defaults.");
+                haptic("done");
+              }}
+            >
+              Confirm reset
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 text-xs"
+              onClick={() => setConfirmReset(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        )}
+      </div>
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </div>
+  );
+}
+
+function AppLockSettingsCard() {
+  const [enabled, setEnabled] = useState(() => isAppLockConfigured());
+  const [pinDraft, setPinDraft] = useState("");
+  const [noteText, setNoteText] = useState<string | null>(null);
+  const record = readAppLockRecord();
+
+  useEffect(() => {
+    const sync = () => setEnabled(isAppLockConfigured());
+    window.addEventListener("hermes-applock-change", sync);
+    return () => window.removeEventListener("hermes-applock-change", sync);
+  }, []);
+
+  return (
+    <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">App PIN &amp; biometric gate</p>
+          <p className="text-xs text-muted-foreground">
+            Require a 4–8 digit PIN (or device passkey/biometrics) when opening this console.
+          </p>
+        </div>
+        {enabled && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => {
+              lockAppNow();
+              haptic("tap");
+            }}
+          >
+            Lock now
+          </Button>
+        )}
+      </div>
+
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          try {
+            configureAppLockPin(pinDraft);
+            setPinDraft("");
+            setEnabled(true);
+            setNoteText("App PIN lock enabled (hashed locally).");
+            haptic("done");
+          } catch (err) {
+            haptic("error");
+            setNoteText(err instanceof Error ? err.message : "Invalid PIN.");
+          }
+        }}
+      >
+        <Input
+          type="password"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={pinDraft}
+          onChange={(e) => setPinDraft(e.target.value)}
+          placeholder={enabled ? "Change 4–8 digit PIN" : "Set 4–8 digit PIN"}
+          className="h-8 font-mono text-xs"
+        />
+        <Button type="submit" size="sm" className="h-8 shrink-0 text-xs">
+          {enabled ? "Update PIN" : "Enable PIN"}
+        </Button>
+      </form>
+
+      {enabled && (
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={async () => {
+              setNoteText(null);
+              try {
+                const ok = await enrollBiometricLock();
+                if (ok) {
+                  setNoteText("Device biometric unlock enabled.");
+                  haptic("done");
+                }
+              } catch (err) {
+                haptic("error");
+                setNoteText(
+                  err instanceof Error ? err.message : "Could not enroll biometric unlock.",
+                );
+              }
+            }}
+          >
+            {record?.biometricCredentialId ? "Re-enroll biometrics" : "Enable biometric unlock"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs text-muted-foreground hover:text-destructive"
+            onClick={() => {
+              disableAppLock();
+              setEnabled(false);
+              setNoteText("App lock disabled.");
+              haptic("tap");
+            }}
+          >
+            Disable lock
+          </Button>
+        </div>
+      )}
+      {noteText && <p className="text-xs text-muted-foreground">{noteText}</p>}
+    </div>
+  );
+}
+
+function DashboardCredentialVaultPanel({ baseUrl }: { baseUrl: string }) {
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [locked, setLocked] = useState(false);
+  const [credentials, setCredentials] = useState<VaultCredentialRow[]>([]);
+  const [domain, setDomain] = useState("");
+  const [username, setUsername] = useState("");
+  const [secret, setSecret] = useState("");
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [noteText, setNoteText] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void readDashboardVaultCredentials(baseUrl)
+      .then((res) => {
+        if (!active) return;
+        setSupported(res.supported);
+        setLocked(Boolean(res.locked));
+        setCredentials(res.credentials);
+      })
+      .catch(() => {
+        if (active) setSupported(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl]);
+
+  const reload = async () => {
+    try {
+      const res = await readDashboardVaultCredentials(baseUrl);
+      setSupported(res.supported);
+      setLocked(Boolean(res.locked));
+      setCredentials(res.credentials);
+    } catch {
+      // Keep current state
+    }
+  };
+
+  if (supported === null) return null;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/70 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Host credential vault</p>
+          <p className="text-xs text-muted-foreground">
+            {!supported
+              ? "This host does not expose /api/vault/credentials yet."
+              : locked
+                ? "Vault is locked on the host. Master unlock stays on the host."
+                : `${credentials.length} stored ${credentials.length === 1 ? "credential" : "credentials"} (write-only secrets)`}
+          </p>
+        </div>
+        {supported && (
+          <Button type="button" size="sm" variant="outline" onClick={() => void reload()}>
+            Refresh
+          </Button>
+        )}
+      </div>
+
+      {supported && !locked && (
+        <form
+          className="space-y-2 border-t border-border/50 pt-2.5"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!domain.trim() || !secret) return;
+            setBusy(true);
+            setNoteText(null);
+            try {
+              await addDashboardVaultCredential(baseUrl, { domain, username, secret });
+              setDomain("");
+              setUsername("");
+              setSecret("");
+              setNoteText("Saved credential to host vault. Secret was not kept on this phone.");
+              await reload();
+              haptic("done");
+            } catch (err) {
+              haptic("error");
+              setNoteText(
+                err instanceof Error ? err.message : "Could not save credential to host vault.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <p className="text-xs font-medium">Add credential (write-only)</p>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="Domain / service (e.g. github.com)"
+              className="h-8 text-xs"
+            />
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username / account"
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder="Password or token (sent to host vault only)"
+              className="h-8 text-xs"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 shrink-0 text-xs"
+              disabled={busy || !domain.trim() || !secret}
+            >
+              Add
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {supported && credentials.length > 0 && (
+        <ul className="max-h-52 space-y-1.5 overflow-y-auto pt-1">
+          {credentials.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">{item.domain}</p>
+                <p className="truncate font-mono text-[11px] text-muted-foreground">
+                  {[item.username || "default", item.updatedAt].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              {confirmRevokeId !== item.id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                  onClick={() => setConfirmRevokeId(item.id)}
+                >
+                  Revoke
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      setNoteText(null);
+                      try {
+                        await revokeDashboardVaultCredential(baseUrl, item.id);
+                        setConfirmRevokeId(null);
+                        setNoteText(`Revoked ${item.domain} from host vault.`);
+                        await reload();
+                        haptic("done");
+                      } catch (err) {
+                        haptic("error");
+                        setNoteText(
+                          err instanceof Error ? err.message : "Could not revoke that credential.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => setConfirmRevokeId(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

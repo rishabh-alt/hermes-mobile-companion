@@ -11,6 +11,7 @@ import {
   parseMemoryFactsPayload,
   parsePairedDevicesPayload,
   parsePairingInput,
+  parseVaultCredentialsPayload,
   sanitizePairingUrl,
 } from "./dashboard";
 import { encodeGatewayAddressQr } from "./qr";
@@ -164,5 +165,28 @@ describe("dashboard address", () => {
       updateAvailable: true,
       canApply: true,
     });
+  });
+
+  it("parses host credential vault metadata without exposing secrets", () => {
+    expect(
+      parseVaultCredentialsPayload({
+        credentials: [
+          {
+            id: "cred_gh",
+            domain: "github.com",
+            username: "rdeol",
+            password: "never-returned-to-phone",
+            updated_at: "2026-10-18",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "cred_gh",
+        domain: "github.com",
+        username: "rdeol",
+        updatedAt: "2026-10-18",
+      },
+    ]);
   });
 });
