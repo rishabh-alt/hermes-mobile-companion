@@ -12,6 +12,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Radio,
   Search,
   Trash2,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useActiveHostRoute } from "@/lib/hermes/compat";
 import { haptic } from "@/lib/hermes/haptics";
 import {
   deleteSession,
@@ -56,17 +58,26 @@ const MENU = [
   { to: "/capabilities", label: "Capabilities", icon: Blocks },
   { to: "/messaging", label: "Messaging", icon: MessageSquare },
   { to: "/artifacts", label: "Artifacts", icon: FileText },
-  { to: "/jobs", label: "Scheduled jobs", icon: Calendar },
   { to: "/kanban", label: "Kanban", icon: Columns3 },
+  { to: "/status", label: "Server status", icon: Radio },
+  { to: "/jobs", label: "Cron jobs", icon: Calendar },
 ] as const;
+
+function isCronSession(session: Pick<Session, "source" | "title" | "id">): boolean {
+  const src = (session.source ?? "").toLowerCase();
+  const label = sessionLabel(session).toLowerCase();
+  return src === "cron" || src === "schedule" || /^(\[?cron\]?|scheduled|job:)/i.test(label);
+}
 
 export function SessionDrawer({ activeId, onNavigate }: Props) {
   const { config, configured } = useHermesConfig();
+  const { snapshot: routeSnapshot } = useActiveHostRoute(config);
   const { sessions } = useSessions();
   const remote = useGateway((c) => listSessions(c, 40), []);
   const profiles = useGateway(listProfiles, ["drawer-profiles"]);
   const [tab, setTab] = useState<"sessions" | "bots">("sessions");
-  const [sourceFilter, setSourceFilter] = useState<"all" | "cron" | "messaging">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "messaging">("all");
+  const [cronRunsOpen, setCronRunsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -146,9 +157,6 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
     if (sourceFilter === "all") return true;
     const src = (session.source ?? "").toLowerCase();
     const label = sessionLabel(session).toLowerCase();
-    if (sourceFilter === "cron") {
-      return src === "cron" || src === "schedule" || /^(\[?cron\]?|scheduled|job:)/i.test(label);
-    }
     return (
       [
         "messaging",
@@ -163,7 +171,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       /^(\[?(telegram|discord|slack|whatsapp|signal|sms|webhook)\]?[:\s-])/i.test(label)
     );
   };
-  const listed = useMemo(() => {
+  const { listed, cronSessions } = useMemo(() => {
     const hostSessions: Session[] = remoteRows.map((item) => {
       const local = sessions.find((session) => session.id === item.id);
       const stamp = hostSessionTime(item.last_active ?? item.updated_at ?? item.created_at);
@@ -179,9 +187,14 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       };
     });
     const localOnly = sessions.filter((session) => !remoteIds.has(session.id));
-    return [...hostSessions, ...localOnly].filter(
-      (session) => matches(sessionLabel(session)) && matchesSource(session),
-    );
+    const merged = [...hostSessions, ...localOnly];
+    return {
+      cronSessions: merged.filter((session) => isCronSession(session)),
+      listed: merged.filter(
+        (session) =>
+          !isCronSession(session) && matches(sessionLabel(session)) && matchesSource(session),
+      ),
+    };
     // remoteRows is the gateway payload; sessions is the open-chat cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remote.data, sessions, query, sourceFilter]);
@@ -432,15 +445,43 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                     {waitingTotal} waiting
                   </span>
                 )}
+                {item.to === "/status" && routeSnapshot && (
+                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                    {routeSnapshot.route.toUpperCase()} · {routeSnapshot.latencyMs}ms
+                  </span>
+                )}
+                {item.to === "/jobs" && cronSessions.length > 0 && (
+                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                    {cronSessions.length}
+                  </span>
+                )}
               </Link>
             ))}
+
+            {cronSessions.length > 0 && (
+              <div className="mt-1 rounded-lg border border-sidebar-border/60 bg-sidebar-accent/20 px-1 py-1">
+                <button
+                  type="button"
+                  onClick={() => setCronRunsOpen((v) => !v)}
+                  className="flex w-full items-center justify-between px-2 py-1 text-left"
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Cron job runs ({cronSessions.length})
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {cronRunsOpen ? "Hide" : "Show"}
+                  </span>
+                </button>
+                {cronRunsOpen && <div className="pt-1">{cronSessions.map(row)}</div>}
+              </div>
+            )}
 
             <div className="relative px-1 pt-3 pb-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search sessions…"
+                placeholder="Search chats…"
                 className="h-9 rounded-lg border-0 bg-transparent pl-9 text-sm focus-visible:bg-background/40"
               />
             </div>
@@ -448,8 +489,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
             <div className="mb-2 flex items-center gap-1 px-2">
               {(
                 [
-                  { id: "all", label: "All" },
-                  { id: "cron", label: "Cron" },
+                  { id: "all", label: "All chats" },
                   { id: "messaging", label: "Messaging" },
                 ] as const
               ).map((item) => (
