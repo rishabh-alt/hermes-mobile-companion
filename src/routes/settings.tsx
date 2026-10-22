@@ -33,7 +33,13 @@ import {
   createPhoneConfigBackup,
   resetPhoneConfigToDefaults,
 } from "@/lib/hermes/config-backup";
+import {
+  evaluateHostCompatibility,
+  resolveOptimalHostRoute,
+  type RouteProbeResult,
+} from "@/lib/hermes/compat";
 import { downloadTextFile } from "@/lib/hermes/export";
+import { buildNtfySubscriptionUrls, sendNtfyNotification } from "@/lib/hermes/ntfy-inbox";
 import {
   addDashboardVaultCredential,
   applyHostUpdate,
@@ -126,6 +132,10 @@ function SettingsRoute() {
       if (cookie) setDashboardReady(true);
     });
   }, []);
+
+  useEffect(() => {
+    setProbes([]);
+  }, [config.baseUrl, config.lanBaseUrl, config.dashboardBaseUrl]);
 
   const sections = useMemo(
     () => searchSections(settingsSections(features, { dashboardSignedIn: dashboardReady }), query),
@@ -260,6 +270,7 @@ function SettingsRoute() {
                         checking={checking}
                         probes={probes}
                         onCheck={checkHost}
+                        onClearProbes={() => setProbes([])}
                         onSignedIn={setDashboardReady}
                       />
                     )}
@@ -398,6 +409,9 @@ function SavedHostsCard({
       label: hostLabel,
       baseUrl: cleanUrl,
       dashboardBaseUrl: config.dashboardBaseUrl || dashboardUrlFromGateway(cleanUrl),
+      ...(config.lanBaseUrl ? { lanBaseUrl: config.lanBaseUrl } : {}),
+      ...(config.lanDashboardBaseUrl ? { lanDashboardBaseUrl: config.lanDashboardBaseUrl } : {}),
+      ...(config.autoRouteLan !== undefined ? { autoRouteLan: config.autoRouteLan } : {}),
       activeProfile: config.activeProfile,
       profilePathPrefix: config.profilePathPrefix,
       provider: config.provider,
@@ -420,6 +434,9 @@ function SavedHostsCard({
     update({
       baseUrl: host.baseUrl,
       dashboardBaseUrl: host.dashboardBaseUrl,
+      lanBaseUrl: host.lanBaseUrl ?? "",
+      lanDashboardBaseUrl: host.lanDashboardBaseUrl ?? "",
+      autoRouteLan: host.autoRouteLan ?? false,
       activeProfile: host.activeProfile ?? "default",
       profilePathPrefix: host.profilePathPrefix ?? "",
       ...(host.provider !== undefined ? { provider: host.provider } : {}),
@@ -547,6 +564,7 @@ function ConnectionFields({
   checking,
   probes,
   onCheck,
+  onClearProbes,
   onSignedIn,
 }: {
   config: ReturnType<typeof useHermesConfig>["config"];
@@ -554,6 +572,7 @@ function ConnectionFields({
   checking: boolean;
   probes: ProbeRow[];
   onCheck: () => void;
+  onClearProbes: () => void;
   onSignedIn: (signedIn: boolean) => void;
 }) {
   const [qrOpen, setQrOpen] = useState(false);
@@ -561,6 +580,8 @@ function ConnectionFields({
   const [cameraActive, setCameraActive] = useState(false);
   const [qrInput, setQrInput] = useState("");
   const [qrNote, setQrNote] = useState<string | null>(null);
+  const [routingProbe, setRoutingProbe] = useState<RouteProbeResult | null>(null);
+  const [testingRoute, setTestingRoute] = useState(false);
   const qrFileRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -697,11 +718,80 @@ function ConnectionFields({
           autoCapitalize="none"
           placeholder="https://your-mac.example.ts.net"
           value={config.baseUrl}
-          onChange={(event) => update({ baseUrl: event.target.value })}
+          onChange={(event) => {
+            onClearProbes();
+            update({ baseUrl: event.target.value });
+          }}
         />
         <p className="text-xs text-muted-foreground">
           HTTPS Tailscale Serve or tunnel URL. Plain HTTP is rejected to protect your token.
         </p>
+      </div>
+      <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium">LAN ↔ Tailscale auto-routing</p>
+            <p className="text-xs text-muted-foreground">
+              Prefer low-latency home Wi-Fi HTTPS when reachable; fall back to Tailscale away.
+            </p>
+          </div>
+          <Switch
+            checked={Boolean(config.autoRouteLan)}
+            onCheckedChange={(autoRouteLan) => update({ autoRouteLan })}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="lanBaseUrl" className="text-xs">
+            LAN HTTPS gateway URL (optional)
+          </Label>
+          <Input
+            id="lanBaseUrl"
+            inputMode="url"
+            autoCapitalize="none"
+            placeholder="https://mac.local:8443"
+            value={config.lanBaseUrl ?? ""}
+            onChange={(event) => {
+              onClearProbes();
+              setRoutingProbe(null);
+              update({ lanBaseUrl: event.target.value });
+            }}
+            className="h-8 text-xs"
+          />
+        </div>
+        {(config.lanBaseUrl?.trim() || config.baseUrl.trim()) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={testingRoute}
+              onClick={async () => {
+                setTestingRoute(true);
+                try {
+                  const res = await resolveOptimalHostRoute(config);
+                  setRoutingProbe(res);
+                  if (res.activeBaseUrl && res.activeBaseUrl !== config.baseUrl) {
+                    update({ baseUrl: res.activeBaseUrl });
+                  }
+                  haptic("done");
+                } finally {
+                  setTestingRoute(false);
+                }
+              }}
+            >
+              {testingRoute ? "Probing routes…" : "Probe & select fastest route"}
+            </Button>
+            {routingProbe && (
+              <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                Active: {routingProbe.route.toUpperCase()} · {routingProbe.latencyMs}ms
+              </span>
+            )}
+          </div>
+        )}
+        {routingProbe?.fallbackReason && (
+          <p className="text-[11px] text-muted-foreground">{routingProbe.fallbackReason}</p>
+        )}
       </div>
       {shareQrOpen && config.baseUrl.trim() && <AddressQrCard baseUrl={config.baseUrl} />}
       {qrOpen && (
@@ -869,7 +959,7 @@ function AppearanceFields({
       <div className="space-y-2 rounded-xl border border-border/70 p-3">
         <div>
           <p className="text-sm font-medium">Theme</p>
-          <p className="text-xs text-muted-foreground">Choose dark console, daylight, or system.</p>
+          <p className="text-xs text-muted-foreground">Choose dark, light, or system theme.</p>
         </div>
         <div className="grid grid-cols-3 gap-2">
           {(
@@ -908,6 +998,18 @@ function AppearanceFields({
         <Switch
           checked={config.showReasoning !== false}
           onCheckedChange={(value) => update({ showReasoning: value })}
+        />
+      </div>
+      <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+        <div>
+          <p className="text-sm font-medium">Gap-awareness context</p>
+          <p className="text-xs text-muted-foreground">
+            Send elapsed time context when resuming a session after 1+ hour.
+          </p>
+        </div>
+        <Switch
+          checked={config.injectGapContext !== false}
+          onCheckedChange={(value) => update({ injectGapContext: value })}
         />
       </div>
       <div className="space-y-2 rounded-xl border border-border/70 p-3">
@@ -1100,6 +1202,122 @@ function NotificationsFields({
           />
         </div>
       </div>
+      <NtfyPushSettingsCard config={config} update={update} />
+    </div>
+  );
+}
+
+function NtfyPushSettingsCard({
+  config,
+  update,
+}: {
+  config: ReturnType<typeof useHermesConfig>["config"];
+  update: ReturnType<typeof useHermesConfig>["update"];
+}) {
+  const [testingPush, setTestingPush] = useState(false);
+  const [pushNote, setPushNote] = useState<string | null>(null);
+  const subUrls = useMemo(
+    () =>
+      buildNtfySubscriptionUrls(config.ntfyServerUrl ?? "https://ntfy.sh", config.ntfyTopic ?? ""),
+    [config.ntfyServerUrl, config.ntfyTopic],
+  );
+
+  return (
+    <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">ntfy push relay (background wake)</p>
+          <p className="text-xs text-muted-foreground">
+            Relay approvals and cron failures to an HTTPS ntfy topic so your phone wakes even when
+            the companion app is closed.
+          </p>
+        </div>
+        <Switch
+          checked={Boolean(config.ntfyEnabled)}
+          onCheckedChange={(ntfyEnabled) => update({ ntfyEnabled })}
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="ntfyServerUrl" className="text-xs">
+            ntfy HTTPS server
+          </Label>
+          <Input
+            id="ntfyServerUrl"
+            inputMode="url"
+            autoCapitalize="none"
+            placeholder="https://ntfy.sh"
+            value={config.ntfyServerUrl ?? ""}
+            onChange={(e) => update({ ntfyServerUrl: e.target.value })}
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="ntfyTopic" className="text-xs">
+            Topic name
+          </Label>
+          <Input
+            id="ntfyTopic"
+            autoCapitalize="none"
+            placeholder="hermes-operator-alerts"
+            value={config.ntfyTopic ?? ""}
+            onChange={(e) => update({ ntfyTopic: e.target.value })}
+            className="h-8 font-mono text-xs"
+          />
+        </div>
+      </div>
+      {subUrls && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <p className="truncate font-mono text-[11px] text-muted-foreground">{subUrls.httpsUrl}</p>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 text-xs"
+              disabled={testingPush}
+              onClick={async () => {
+                setTestingPush(true);
+                setPushNote(null);
+                try {
+                  await sendNtfyNotification({
+                    serverUrl: config.ntfyServerUrl,
+                    topic: config.ntfyTopic ?? "",
+                    title: "Hermes Companion test push",
+                    message: "Background approval and cron alerts are connected.",
+                    priority: "high",
+                  });
+                  setPushNote("Sent test notification to ntfy topic.");
+                  haptic("done");
+                } catch (err) {
+                  haptic("error");
+                  setPushNote(
+                    err instanceof Error ? err.message : "Could not send test push to ntfy.",
+                  );
+                } finally {
+                  setTestingPush(false);
+                }
+              }}
+            >
+              {testingPush ? "Sending…" : "Send test push"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => {
+                void navigator.clipboard?.writeText(subUrls.httpsUrl);
+                setPushNote("Copied topic URL for the ntfy mobile app.");
+                haptic("tap");
+              }}
+            >
+              Copy URL
+            </Button>
+          </div>
+        </div>
+      )}
+      {pushNote && <p className="text-xs text-muted-foreground">{pushNote}</p>}
     </div>
   );
 }
@@ -1124,6 +1342,17 @@ function AboutFields({
   const [confirmApply, setConfirmApply] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateNote, setUpdateNote] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+
+  const compat = useMemo(
+    () =>
+      evaluateHostCompatibility({
+        version: updateInfo?.currentVersion,
+        configVersion: updateInfo?.configVersion,
+        latestConfigVersion: updateInfo?.latestConfigVersion,
+      }),
+    [updateInfo],
+  );
 
   const runUpdateCheck = async () => {
     if (!dashboardUrl) return;
@@ -1168,15 +1397,18 @@ function AboutFields({
           {dashboardReady ? "signed in" : "not signed in"}
         </p>
         <p className="text-muted-foreground">
-          Transport: SSE fetch streaming · Native HTTP Dashboard
+          Verified gateway range:{" "}
+          <span className="font-mono tabular-nums text-foreground">{compat.supportedRange}</span>
         </p>
       </div>
 
       <div className="space-y-2.5 rounded-xl border border-border/70 p-3 text-xs">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-medium text-foreground">Host Hermes release</p>
-            <p className="text-muted-foreground">
+            <p className="text-sm font-medium text-foreground">
+              Host Hermes release &amp; compatibility
+            </p>
+            <p className="text-muted-foreground tabular-nums">
               {updateInfo ? (
                 <>
                   Version{" "}
@@ -1193,12 +1425,19 @@ function AboutFields({
             type="button"
             variant="outline"
             size="sm"
-            disabled={checkingUpdate || !dashboardUrl || !dashboardReady}
+            disabled={checkingUpdate || !dashboardUrl}
             onClick={() => void runUpdateCheck()}
           >
-            {checkingUpdate ? "Checking…" : "Check update"}
+            {checkingUpdate ? "Checking…" : "Check version"}
           </Button>
         </div>
+
+        {updateInfo && (
+          <div className="rounded-lg border border-border/60 bg-secondary/30 p-2.5">
+            <p className="font-medium text-foreground">{compat.headline}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{compat.detail}</p>
+          </div>
+        )}
 
         {updateInfo?.releaseNotes && (
           <p className="rounded-lg bg-secondary/40 p-2 text-[11px] text-muted-foreground">
@@ -1265,10 +1504,54 @@ function AboutFields({
 
         {!dashboardReady && (
           <p className="text-[11px] text-muted-foreground">
-            Sign in to the Dashboard in Connection to check or apply host updates.
+            Public /api/status version checks work immediately; sign in to the Dashboard in
+            Connection to apply host upgrades.
           </p>
         )}
         {updateNote && <p className="text-xs text-muted-foreground">{updateNote}</p>}
+      </div>
+
+      <div className="space-y-2 rounded-xl border border-border/70 p-3 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-foreground">Setup &amp; probe reference</p>
+            <p className="text-muted-foreground">
+              Which URL goes where, supported Hermes versions, and what host probes mean.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setGuideOpen((prev) => !prev)}
+          >
+            {guideOpen ? "Hide" : "Show guide"}
+          </Button>
+        </div>
+        {guideOpen && (
+          <div className="space-y-2 border-t border-border/60 pt-2 text-[11px] leading-relaxed text-muted-foreground">
+            <p>
+              <strong className="text-foreground">1. Gateway vs. Dashboard URL:</strong> The Gateway
+              address points to your HTTPS Hermes API server (default host port{" "}
+              <span className="font-mono tabular-nums">8642</span> via Tailscale Serve). The
+              Dashboard address points to the web admin UI (default port{" "}
+              <span className="font-mono tabular-nums">9119</span>).
+            </p>
+            <p>
+              <strong className="text-foreground">2. LAN ↔ Tailscale routing:</strong> Add your home
+              Wi-Fi HTTPS address in Connection to bypass tailnet relay hops when on the same LAN.
+            </p>
+            <p>
+              <strong className="text-foreground">3. Probe statuses:</strong>{" "}
+              <span className="font-mono text-foreground">ok</span> = endpoint verified;{" "}
+              <span className="font-mono text-foreground">auth</span> = token or dashboard login
+              needed; <span className="font-mono text-foreground">unsupported</span> = optional
+              endpoint not enabled on this Hermes version;{" "}
+              <span className="font-mono text-foreground">transport</span> = network/TLS
+              unreachable.
+            </p>
+          </div>
+        )}
       </div>
 
       <Button

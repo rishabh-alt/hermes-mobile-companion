@@ -57,6 +57,12 @@ import { normalizePromptEvent } from "@/lib/hermes/rpc";
 import { createRunGuard, profileRunBoundary } from "@/lib/hermes/run-guard";
 import { useHermesRpc } from "@/lib/hermes/useRpc";
 import { createClientId } from "@/lib/hermes/ids";
+import {
+  formatDateDivider,
+  formatTimeGap,
+  injectGapContextIntoText,
+  shouldShowDateDivider,
+} from "@/lib/hermes/timestamps";
 import type { Attachment, HermesMessage, ReasoningLevel, ToolCall } from "@/lib/hermes/types";
 import { importGatewaySession } from "@/lib/hermes/sessions";
 import { AppShell } from "@/components/hermes/app-shell";
@@ -513,10 +519,22 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       let completedModel = activeModel;
       const attempt = (model: string) => {
         const prompt = history[history.length - 1];
+        const prevMessage = history.length >= 2 ? history[history.length - 2] : undefined;
+        const promptWithGap: HermesMessage | undefined = prompt
+          ? {
+              ...prompt,
+              text: injectGapContextIntoText(
+                prompt.text,
+                prevMessage?.createdAt,
+                prompt.createdAt,
+                config.injectGapContext !== false,
+              ),
+            }
+          : undefined;
         return streamGatewaySession({
           config,
           sessionId,
-          message: prompt ? toSessionContent(prompt) : "",
+          message: promptWithGap ? toSessionContent(promptWithGap) : "",
           provider: activeProvider,
           model,
           signal: profileRun.signal,
@@ -991,22 +1009,39 @@ export function ChatView({ sessionId }: { sessionId: string }) {
                       onClick={() => setTemplateSheet(true)}
                     >
                       <Sparkles className="h-3.5 w-3.5 text-primary" />
-                      Headless PC prompt templates
+                      Host prompt templates
                     </Button>
                   </div>
                 </div>
               </div>
             ) : (
-              visibleMessages.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  live={live?.id === message.id}
-                  highlighted={Boolean(activeQuery) && matchedIds.has(message.id)}
-                  onRetry={live?.id === message.id ? undefined : retry}
-                  onReact={(emoji) => react(message.id, emoji)}
-                />
-              ))
+              visibleMessages.map((message, idx) => {
+                const prev = idx > 0 ? visibleMessages[idx - 1] : undefined;
+                const showDivider = shouldShowDateDivider(prev?.createdAt, message.createdAt);
+                const gapText = formatTimeGap(prev?.createdAt, message.createdAt);
+                return (
+                  <div key={message.id} className="space-y-3">
+                    {(showDivider || gapText) && (
+                      <div className="my-1 flex items-center justify-center gap-2 text-[11px] text-muted-foreground tabular-nums">
+                        {showDivider && (
+                          <span className="font-medium text-foreground/80">
+                            {formatDateDivider(message.createdAt)}
+                          </span>
+                        )}
+                        {showDivider && gapText && <span aria-hidden="true">·</span>}
+                        {gapText && <span className="font-mono text-[10px]">{gapText}</span>}
+                      </div>
+                    )}
+                    <MessageBubble
+                      message={message}
+                      live={live?.id === message.id}
+                      highlighted={Boolean(activeQuery) && matchedIds.has(message.id)}
+                      onRetry={live?.id === message.id ? undefined : retry}
+                      onReact={(emoji) => react(message.id, emoji)}
+                    />
+                  </div>
+                );
+              })
             )}
             {pulling && messages.length === 0 && (
               <p className="px-1 text-sm text-muted-foreground">Loading this conversation…</p>

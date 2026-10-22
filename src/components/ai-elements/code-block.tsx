@@ -147,11 +147,15 @@ const getHighlighter = (
     return cached;
   }
 
-  const highlighterPromise = import("shiki").then(({ createHighlighter }) =>
-    createHighlighter({
-      langs: [language],
-      themes: ["github-light", "github-dark"],
-    }),
+  const highlighterPromise = import("shiki/bundle/web").then(
+    async ({ createHighlighter, bundledLanguages }) => {
+      const supported = language in bundledLanguages ? [language] : [];
+      const highlighter = await createHighlighter({
+        langs: supported,
+        themes: ["github-light", "github-dark"],
+      });
+      return highlighter as unknown as HighlighterGeneric<BundledLanguage, BundledTheme>;
+    },
   );
 
   highlighterCache.set(language, highlighterPromise);

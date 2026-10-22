@@ -74,7 +74,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         <div className="space-y-1">
           <h1 className="text-base font-semibold">Hermes Console Locked</h1>
           <p className="text-xs text-muted-foreground">
-            Enter your PIN to access your headless PC console.
+            Enter your PIN to access your headless host console.
           </p>
         </div>
 

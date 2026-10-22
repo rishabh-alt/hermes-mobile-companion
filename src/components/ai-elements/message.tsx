@@ -4,10 +4,6 @@ import { Button } from "@/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
@@ -270,16 +266,76 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+type StreamdownPluginMap = NonNullable<MessageResponseProps["plugins"]>;
+
+const cachedPlugins: StreamdownPluginMap = {};
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
-      plugins={streamdownPlugins}
-      {...props}
-    />
-  ),
+  ({ className, children, ...props }: MessageResponseProps) => {
+    const text = typeof children === "string" ? children : "";
+    const needsCode = text.includes("```");
+    const needsMermaid = text.includes("```mermaid");
+    const needsMath = text.includes("$$") || text.includes("\\[") || text.includes("\\(");
+    const needsCjk = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text);
+
+    const [plugins, setPlugins] = useState<StreamdownPluginMap>(() => ({ ...cachedPlugins }));
+
+    useEffect(() => {
+      let cancelled = false;
+      const tasks: Array<Promise<void>> = [];
+
+      if (needsCode && !cachedPlugins.code) {
+        tasks.push(
+          import("@streamdown/code").then((m) => {
+            cachedPlugins.code = m.code;
+          }),
+        );
+      }
+      if (needsMermaid && !cachedPlugins.mermaid) {
+        tasks.push(
+          import("@streamdown/mermaid").then((m) => {
+            cachedPlugins.mermaid = m.mermaid;
+          }),
+        );
+      }
+      if (needsMath && !cachedPlugins.math) {
+        tasks.push(
+          import("@streamdown/math").then((m) => {
+            cachedPlugins.math = m.math;
+          }),
+        );
+      }
+      if (needsCjk && !cachedPlugins.cjk) {
+        tasks.push(
+          import("@streamdown/cjk").then((m) => {
+            cachedPlugins.cjk = m.cjk;
+          }),
+        );
+      }
+
+      if (tasks.length > 0) {
+        void Promise.all(tasks).then(() => {
+          if (!cancelled) {
+            setPlugins({ ...cachedPlugins });
+          }
+        });
+      }
+
+      return () => {
+        cancelled = true;
+      };
+    }, [needsCode, needsMermaid, needsMath, needsCjk]);
+
+    return (
+      <Streamdown
+        className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+        plugins={plugins}
+        {...props}
+      >
+        {children}
+      </Streamdown>
+    );
+  },
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children && nextProps.isAnimating === prevProps.isAnimating,
 );

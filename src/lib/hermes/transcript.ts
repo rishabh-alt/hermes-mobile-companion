@@ -80,6 +80,7 @@ function imageAttachmentsOf(content: unknown, messageId: string): Attachment[] {
 /** Host notes injected for the model must not appear in the phone bubble. */
 export function visibleChatText(text: string): string {
   return text
+    .replace(/^\[Context:\s*[^\]]*since previous message[^\]]*\]\s*/i, "")
     .replace(/<memory-context>[\s\S]*?<\/memory-context>/gi, "")
     .replace(/<memory-context>[\s\S]*$/gi, "")
     .replace(/\n*\[System note: The following is recalled memory context[\s\S]*$/i, "")

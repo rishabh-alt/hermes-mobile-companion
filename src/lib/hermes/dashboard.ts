@@ -254,21 +254,34 @@ export interface DashboardField {
   description: string;
   options: string[];
   value: unknown;
+  category?: string | undefined;
 }
 
-const SECTION_CATEGORIES: Record<string, string[]> = {
-  chat: ["agent", "attachments"],
-  workspace: ["terminal"],
+export const SECTION_CATEGORIES: Record<string, string[]> = {
+  chat: ["agent", "attachments", "display", "general"],
+  workspace: ["terminal", "kanban", "worktrees", "loops", "desktop", "bot_desktop"],
   safety: ["security"],
-  browser: ["browser"],
-  memory: ["memory", "compression"],
-  voice: ["voice", "tts", "stt"],
-  providers: ["openrouter", "bedrock", "auxiliary"],
-  gateway: ["gateway", "streaming"],
-  tools: ["tools", "tool_output", "tool_loop_guardrails"],
+  browser: ["browser", "secrets", "vault"],
+  memory: ["memory", "compression", "curator"],
+  voice: ["voice", "tts", "stt", "wake_word"],
+  providers: ["openrouter", "bedrock", "auxiliary", "vertex", "model_catalog"],
+  gateway: ["gateway", "streaming", "proxy"],
+  messaging_platforms: [
+    "discord",
+    "slack",
+    "matrix",
+    "mattermost",
+    "telegram",
+    "whatsapp",
+    "signal",
+    "messaging",
+  ],
+  tools: ["tools", "tool_output", "tool_loop_guardrails", "web", "x_search", "vision", "lsp"],
   sessions: ["sessions"],
-  runtime: ["delegation", "local_runtime"],
+  runtime: ["delegation", "local_runtime", "monitoring", "moa", "database", "logging"],
 };
+
+export const ALL_MAPPED_CATEGORIES = new Set(Object.values(SECTION_CATEGORIES).flat());
 
 function valueAt(config: Record<string, unknown>, key: string): unknown {
   return key.split(".").reduce<unknown>((current, part) => {
@@ -295,6 +308,7 @@ export async function readDashboardSection(
   sectionId: string,
 ): Promise<DashboardField[]> {
   const categories = new Set(SECTION_CATEGORIES[sectionId] ?? []);
+  const includeCatchAll = sectionId === "runtime";
   const [schema, saved] = await Promise.all([
     dashboardRequest(baseUrl, "/api/config/schema", "GET"),
     dashboardRequest(baseUrl, "/api/config", "GET"),
@@ -313,36 +327,39 @@ export async function readDashboardSection(
   const rawConfig = savedBody["config"];
   const values =
     rawConfig && typeof rawConfig === "object" ? (rawConfig as Record<string, unknown>) : {};
-  return Object.entries(fields)
-    .flatMap(([key, raw]) => {
-      if (!raw || typeof raw !== "object") return [];
-      const field = raw as Record<string, unknown>;
-      if (!categories.has(String(field["category"] ?? ""))) return [];
-      const rawType = String(field["type"] ?? "");
-      const currentVal = valueAt(values, key);
-      const type =
-        rawType === "list" || rawType === "array" || Array.isArray(currentVal) ? "array" : rawType;
-      if (
-        type !== "string" &&
-        type !== "number" &&
-        type !== "boolean" &&
-        type !== "select" &&
-        type !== "array"
-      )
-        return [];
-      if (/api_key|token|secret|password/i.test(key)) return [];
-      const options = field["options"];
-      return [
-        {
-          key,
-          type: type as DashboardField["type"],
-          description: String(field["description"] ?? ""),
-          options: Array.isArray(options) ? options.map(String) : [],
-          value: currentVal,
-        },
-      ];
-    })
-    .slice(0, 120);
+  return Object.entries(fields).flatMap(([key, raw]) => {
+    if (!raw || typeof raw !== "object") return [];
+    const field = raw as Record<string, unknown>;
+    const category = String(field["category"] ?? "").trim();
+    const matchesSection =
+      categories.has(category) ||
+      (includeCatchAll && Boolean(category) && !ALL_MAPPED_CATEGORIES.has(category));
+    if (!matchesSection) return [];
+    const rawType = String(field["type"] ?? "");
+    const currentVal = valueAt(values, key);
+    const type =
+      rawType === "list" || rawType === "array" || Array.isArray(currentVal) ? "array" : rawType;
+    if (
+      type !== "string" &&
+      type !== "number" &&
+      type !== "boolean" &&
+      type !== "select" &&
+      type !== "array"
+    )
+      return [];
+    if (/api_key|token|secret|password/i.test(key)) return [];
+    const options = field["options"];
+    return [
+      {
+        key,
+        type: type as DashboardField["type"],
+        description: String(field["description"] ?? ""),
+        options: Array.isArray(options) ? options.map(String) : [],
+        value: currentVal,
+        ...(category ? { category } : {}),
+      },
+    ];
+  });
 }
 
 export async function saveDashboardValue(
@@ -950,6 +967,8 @@ export interface HostUpdateInfo {
   currentVersion: string;
   latestVersion?: string | undefined;
   commit?: string | undefined;
+  configVersion?: number | undefined;
+  latestConfigVersion?: number | undefined;
   updateAvailable: boolean;
   canApply: boolean;
   releaseNotes?: string | undefined;
@@ -977,6 +996,11 @@ export function parseHostUpdatePayload(payload: unknown): HostUpdateInfo {
     typeof latestRaw === "string" && latestRaw.trim() ? latestRaw.trim() : undefined;
   const commitRaw = update["commit"] ?? update["git_sha"] ?? root["commit"] ?? root["git_sha"];
   const commit = typeof commitRaw === "string" && commitRaw.trim() ? commitRaw.trim() : undefined;
+  const configVerRaw = update["config_version"] ?? root["config_version"];
+  const latestConfigVerRaw = update["latest_config_version"] ?? root["latest_config_version"];
+  const configVersion = typeof configVerRaw === "number" ? configVerRaw : undefined;
+  const latestConfigVersion =
+    typeof latestConfigVerRaw === "number" ? latestConfigVerRaw : undefined;
   const updateAvailable =
     update["update_available"] === true ||
     update["has_update"] === true ||
@@ -991,6 +1015,8 @@ export function parseHostUpdatePayload(payload: unknown): HostUpdateInfo {
     currentVersion,
     ...(latestVersion ? { latestVersion } : {}),
     ...(commit ? { commit } : {}),
+    ...(configVersion !== undefined ? { configVersion } : {}),
+    ...(latestConfigVersion !== undefined ? { latestConfigVersion } : {}),
     updateAvailable,
     canApply,
     ...(releaseNotes ? { releaseNotes } : {}),

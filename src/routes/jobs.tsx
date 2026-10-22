@@ -1,11 +1,23 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { History, MessageSquare, Pause, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
+import {
+  CheckCheck,
+  History,
+  Inbox,
+  MessageSquare,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { GatewayPage, Row } from "@/components/hermes/gateway-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { recordCronInboxItem, useCronInbox } from "@/lib/hermes/ntfy-inbox";
 import {
   createCronJob,
   cronAction,
@@ -53,6 +65,7 @@ function when(value: string | number | undefined) {
 function JobsRoute() {
   const jobs = useGateway(listCronJobs, []);
   const targets = useGateway(cronDeliveryTargets, ["cron-delivery-targets"]);
+  const cronInbox = useCronInbox();
   const [editingJob, setEditingJob] = useState<Partial<CronJob> | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -81,9 +94,20 @@ function JobsRoute() {
     }
     setExpandedRunsId(jobId);
     setLoadingRunsId(jobId);
+    const jobName = jobs.data?.find((j) => j.id === jobId)?.name ?? jobId;
     void cronRuns(jobs.config, jobId, 10)
       .then((rows) => {
         setRunsByJob((prev) => ({ ...prev, [jobId]: rows }));
+        for (const r of rows.slice(0, 5)) {
+          recordCronInboxItem({
+            id: r.id ? `run-${r.id}` : `run-${jobId}-${r.started_at ?? "latest"}`,
+            jobId,
+            jobName,
+            status: r.status === "failed" || r.status === "error" ? "failed" : "completed",
+            summary: (r.summary ?? r.output ?? `Run ${r.status ?? "completed"}`).slice(0, 200),
+            ...(r.session_id ? { sessionId: r.session_id } : {}),
+          });
+        }
       })
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setLoadingRunsId(null));
@@ -134,10 +158,96 @@ function JobsRoute() {
       unavailable={jobs.unavailable}
       error={jobs.error}
       configured={jobs.configured}
-      empty={jobs.data?.length === 0 && !editingJob}
+      empty={jobs.data?.length === 0 && !editingJob && cronInbox.items.length === 0}
       emptyText="No scheduled jobs."
       onRefresh={jobs.refresh}
     >
+      <div className="mb-4 space-y-2.5 rounded-xl border border-border/70 bg-secondary/15 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Inbox className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Cron Results Inbox
+            </p>
+            <span className="font-mono text-xs tabular-nums text-muted-foreground">
+              · {cronInbox.items.length} recorded
+              {cronInbox.unreadCount > 0 ? ` (${cronInbox.unreadCount} unread)` : ""}
+            </span>
+          </div>
+          {cronInbox.items.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {cronInbox.unreadCount > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={cronInbox.markAllRead}
+                >
+                  <CheckCheck className="mr-1 h-3.5 w-3.5" />
+                  Mark read
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={cronInbox.clear}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
+        </div>
+        {cronInbox.items.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Completed cron runs, background task summaries, and approval alerts recorded while the
+            app is open or inspected appear here.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {cronInbox.items.slice(0, 8).map((item) => (
+              <li
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2 text-xs"
+              >
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-foreground">{item.jobName}</span>
+                    <span className="text-muted-foreground">·</span>
+                    <span
+                      className={
+                        item.status === "failed"
+                          ? "font-medium text-destructive"
+                          : item.status === "approval"
+                            ? "font-medium text-amber-400"
+                            : "text-emerald-400"
+                      }
+                    >
+                      {item.status}
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {when(item.recordedAt)}
+                    </span>
+                  </div>
+                  <p className="truncate text-muted-foreground">{item.summary}</p>
+                </div>
+                {item.sessionId && (
+                  <Button asChild size="sm" variant="outline" className="h-6 px-2 text-[11px]">
+                    <Link to="/c/$sessionId" params={{ sessionId: item.sessionId }}>
+                      <MessageSquare className="mr-1 h-3 w-3" />
+                      Open chat
+                    </Link>
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="mb-3 flex items-center justify-end">
         <Button
           type="button"

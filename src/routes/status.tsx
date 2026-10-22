@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { GatewayPage, Row } from "@/components/hermes/gateway-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { evaluateHostCompatibility } from "@/lib/hermes/compat";
 import { useHermesConfig } from "@/lib/hermes/config";
 import {
   fetchModelOptions,
@@ -125,6 +126,13 @@ function StatusRoute() {
   const [fallbackDraft, setFallbackDraft] = useState(config.fallbackModel);
   const reachable = Boolean(readout.data?.status) && !readout.error;
   const models = readout.data?.models ?? [];
+  const rawVersion =
+    typeof readout.data?.status?.["version"] === "string"
+      ? readout.data.status["version"]
+      : typeof readout.data?.status?.["gateway_version"] === "string"
+        ? readout.data.status["gateway_version"]
+        : undefined;
+  const compat = rawVersion ? evaluateHostCompatibility(rawVersion) : null;
 
   const handleReloadHost = async () => {
     setReloading(true);
@@ -169,6 +177,19 @@ function StatusRoute() {
         <p className="truncate font-mono text-xs text-muted-foreground">
           {config.baseUrl || "No HTTPS gateway configured"}
         </p>
+        {compat && (
+          <p
+            className={
+              compat.status === "compatible"
+                ? "text-xs text-emerald-400"
+                : compat.status === "outdated" || compat.status === "migration_needed"
+                  ? "text-xs text-amber-400"
+                  : "text-xs text-muted-foreground"
+            }
+          >
+            {compat.summary}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button type="button" size="sm" variant="outline" onClick={readout.refresh}>
             <RefreshCw className="mr-1.5 h-3.5 w-3.5" />

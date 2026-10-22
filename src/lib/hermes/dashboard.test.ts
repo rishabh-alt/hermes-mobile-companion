@@ -148,22 +148,26 @@ describe("dashboard address", () => {
     ]);
   });
 
-  it("parses host update check payload and detects available updates", () => {
+  it("parses host update check payload and detects available updates and config_version", () => {
     expect(
       parseHostUpdatePayload({
         update: {
-          current_version: "0.9.4",
-          latest_version: "0.9.5",
+          current_version: "0.21.0",
+          latest_version: "0.22.0",
           commit: "a1b2c3d",
           can_apply: true,
+          config_version: 3,
+          latest_config_version: 4,
         },
       }),
     ).toEqual({
-      currentVersion: "0.9.4",
-      latestVersion: "0.9.5",
+      currentVersion: "0.21.0",
+      latestVersion: "0.22.0",
       commit: "a1b2c3d",
       updateAvailable: true,
       canApply: true,
+      configVersion: 3,
+      latestConfigVersion: 4,
     });
   });
 

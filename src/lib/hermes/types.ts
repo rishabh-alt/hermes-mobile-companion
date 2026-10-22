@@ -65,6 +65,9 @@ export interface SavedHost {
   label: string;
   baseUrl: string;
   dashboardBaseUrl: string;
+  lanBaseUrl?: string | undefined;
+  lanDashboardBaseUrl?: string | undefined;
+  autoRouteLan?: boolean | undefined;
   activeProfile?: string | undefined;
   profilePathPrefix?: string | undefined;
   provider?: string | undefined;
@@ -74,6 +77,9 @@ export interface SavedHost {
 
 export interface HermesConfig {
   baseUrl: string;
+  lanBaseUrl?: string | undefined;
+  lanDashboardBaseUrl?: string | undefined;
+  autoRouteLan?: boolean | undefined;
   token: string;
   adminToken: string;
   activeProfile: string;
@@ -87,6 +93,10 @@ export interface HermesConfig {
   haptics: boolean;
   reasoning: ReasoningLevel;
   fastMode: boolean;
+  injectGapContext?: boolean | undefined;
+  ntfyEnabled?: boolean | undefined;
+  ntfyServerUrl?: string | undefined;
+  ntfyTopic?: string | undefined;
   fontScale?: FontScale | undefined;
   theme?: ThemeMode | undefined;
   toolDetail?: ToolDetailMode | undefined;

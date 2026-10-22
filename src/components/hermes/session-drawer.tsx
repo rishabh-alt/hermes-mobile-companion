@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { haptic } from "@/lib/hermes/haptics";
@@ -33,6 +34,7 @@ import { useGateway } from "@/lib/hermes/useGateway";
 import { pullSession } from "@/lib/hermes/session-sync";
 import {
   deleteSession as deleteGatewaySession,
+  fetchActiveSessionPrompts,
   listProfiles,
   listSessions,
   pinSession,
@@ -69,6 +71,9 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [waitingBySession, setWaitingBySession] = useState<Record<string, "approval" | "clarify">>(
+    {},
+  );
   const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({
     "This week": true,
     Earlier: true,
@@ -97,6 +102,40 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
       window.removeEventListener("focus", refreshIfVisible);
     };
   }, [configured, remote.refresh]);
+
+  useEffect(() => {
+    if (!configured || !remote.data || remote.data.length === 0) {
+      setWaitingBySession({});
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    const recentIds = remote.data.slice(0, 10).map((item) => item.id);
+    void Promise.all(
+      recentIds.map(async (id) => {
+        try {
+          const res = await fetchActiveSessionPrompts(config, id, controller.signal);
+          return [id, res] as const;
+        } catch {
+          return [id, { approval: null, clarify: null }] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<string, "approval" | "clarify"> = {};
+      for (const [id, prompt] of entries) {
+        if (prompt.approval) next[id] = "approval";
+        else if (prompt.clarify) next[id] = "clarify";
+      }
+      setWaitingBySession(next);
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [config, configured, remote.data]);
+
+  const waitingTotal = Object.keys(waitingBySession).length;
 
   const remoteRows = remote.data ?? [];
   const remoteIds = new Set(remoteRows.map((item) => item.id));
@@ -150,6 +189,9 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
 
   const startNew = async () => {
     if (!configured) {
+      haptic("error");
+      toast.info("Connect your Hermes host in Settings before starting a new chat.");
+      onNavigate?.();
       void navigate({ to: "/settings" });
       return;
     }
@@ -163,6 +205,7 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
 
   const row = (session: Session) => {
     const isRenaming = renaming === session.id;
+    const waitingKind = waitingBySession[session.id];
     return (
       <div
         key={session.id}
@@ -210,7 +253,11 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               aria-hidden
               className={cn(
                 "h-1.5 w-1.5 shrink-0 rounded-full",
-                session.id === activeId ? "bg-primary" : "bg-muted-foreground/40",
+                waitingKind
+                  ? "bg-amber-500"
+                  : session.id === activeId
+                    ? "bg-primary"
+                    : "bg-muted-foreground/40",
               )}
             />
             <Link
@@ -222,11 +269,18 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
               }}
               className={cn("min-w-0 flex-1 pl-2 text-left", compact ? "py-1" : "py-2")}
             >
-              <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
-                {sessionLabel(session)}
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-[15px] leading-tight text-sidebar-foreground">
+                  {sessionLabel(session)}
+                </p>
+                {waitingKind && (
+                  <span className="shrink-0 font-mono text-[10px] font-medium text-amber-500">
+                    {waitingKind === "approval" ? "Approval needed" : "Waiting on you"}
+                  </span>
+                )}
+              </div>
               {!compact && (
-                <p className="truncate pt-0.5 text-xs text-muted-foreground">
+                <p className="truncate pt-0.5 text-xs text-muted-foreground tabular-nums">
                   {session.model ? `${session.model.split("/").pop()} · ` : ""}
                   {session.messages.length || counts.get(session.id)
                     ? `${session.messages.length || counts.get(session.id)} messages`
@@ -372,7 +426,12 @@ export function SessionDrawer({ activeId, onNavigate }: Props) {
                 activeProps={{ className: "bg-sidebar-accent" }}
               >
                 <item.icon className="h-4 w-4 text-muted-foreground" />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.to === "/activity" && waitingTotal > 0 && (
+                  <span className="font-mono text-xs font-medium text-amber-500 tabular-nums">
+                    {waitingTotal} waiting
+                  </span>
+                )}
               </Link>
             ))}
 

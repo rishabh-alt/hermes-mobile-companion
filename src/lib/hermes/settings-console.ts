@@ -70,7 +70,7 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   {
     id: "notifications",
     title: "Notifications",
-    summary: "Phone alerts. A killed app cannot be woken by the host yet.",
+    summary: "Phone alerts, completion sound, and ntfy push relay.",
     kind: "phone",
   },
   {
@@ -82,13 +82,19 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   {
     id: "gateway",
     title: "Gateway",
-    summary: "Host bind, paired devices, and diagnostics.",
+    summary: "Host bind, paired devices, proxy, and diagnostics.",
+    kind: "host",
+  },
+  {
+    id: "messaging_platforms",
+    title: "Messaging platforms",
+    summary: "Discord, Slack, Matrix, Mattermost, and bot adapters.",
     kind: "host",
   },
   {
     id: "tools",
     title: "Tools & keys",
-    summary: "Toolsets, tool keys, and output limits.",
+    summary: "Toolsets, web search, vision, LSP, and output limits.",
     kind: "host",
   },
   {
@@ -100,7 +106,7 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   {
     id: "runtime",
     title: "Host runtime",
-    summary: "Turn limits, delegation, and keep-awake.",
+    summary: "Turn limits, delegation, monitoring, MoA, and database.",
     kind: "host",
   },
   {
@@ -112,7 +118,7 @@ const CATALOG: Array<{ id: string; title: string; summary: string; kind: Section
   {
     id: "about",
     title: "About",
-    summary: "App version, host version, and update checks.",
+    summary: "App version, host compatibility check, and setup guide.",
     kind: "phone",
   },
 ];

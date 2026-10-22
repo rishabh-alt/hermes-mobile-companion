@@ -72,6 +72,39 @@ export function parsePhoneConfigBackup(rawJson: string): {
     }
     patch.dashboardBaseUrl = dash;
   }
+  if (typeof sourceConfig["lanBaseUrl"] === "string") {
+    const lan = sourceConfig["lanBaseUrl"].trim();
+    if (lan && !isSecureBaseUrl(lan)) {
+      throw new Error("Backup lanBaseUrl must use https://.");
+    }
+    patch.lanBaseUrl = lan;
+  }
+  if (typeof sourceConfig["lanDashboardBaseUrl"] === "string") {
+    const lanDash = sourceConfig["lanDashboardBaseUrl"].trim();
+    if (lanDash && !isSecureBaseUrl(lanDash)) {
+      throw new Error("Backup lanDashboardBaseUrl must use https://.");
+    }
+    patch.lanDashboardBaseUrl = lanDash;
+  }
+  if (typeof sourceConfig["autoRouteLan"] === "boolean") {
+    patch.autoRouteLan = sourceConfig["autoRouteLan"];
+  }
+  if (typeof sourceConfig["injectGapContext"] === "boolean") {
+    patch.injectGapContext = sourceConfig["injectGapContext"];
+  }
+  if (typeof sourceConfig["ntfyEnabled"] === "boolean") {
+    patch.ntfyEnabled = sourceConfig["ntfyEnabled"];
+  }
+  if (typeof sourceConfig["ntfyServerUrl"] === "string") {
+    const ntfyUrl = sourceConfig["ntfyServerUrl"].trim();
+    if (ntfyUrl && !isSecureBaseUrl(ntfyUrl)) {
+      throw new Error("Backup ntfyServerUrl must use https://.");
+    }
+    patch.ntfyServerUrl = ntfyUrl;
+  }
+  if (typeof sourceConfig["ntfyTopic"] === "string") {
+    patch.ntfyTopic = sourceConfig["ntfyTopic"].trim();
+  }
   if (typeof sourceConfig["activeProfile"] === "string" && sourceConfig["activeProfile"].trim()) {
     patch.activeProfile = sourceConfig["activeProfile"].trim();
   }
@@ -133,6 +166,8 @@ export function parsePhoneConfigBackup(rawJson: string): {
       const label = String(row["label"] ?? "").trim();
       const baseUrl = String(row["baseUrl"] ?? "").trim();
       const dashboardBaseUrl = String(row["dashboardBaseUrl"] ?? "").trim();
+      const lanBaseUrl = String(row["lanBaseUrl"] ?? "").trim();
+      const lanDashboardBaseUrl = String(row["lanDashboardBaseUrl"] ?? "").trim();
       if (!id || !label || !baseUrl) {
         throw new Error(
           `Backup savedHosts entry "${label || id || `#${index + 1}`}" is missing id, label, or baseUrl.`,
@@ -144,11 +179,22 @@ export function parsePhoneConfigBackup(rawJson: string): {
       if (dashboardBaseUrl && !isSecureBaseUrl(dashboardBaseUrl)) {
         throw new Error(`Backup savedHosts entry "${label}" dashboardBaseUrl must use https://.`);
       }
+      if (lanBaseUrl && !isSecureBaseUrl(lanBaseUrl)) {
+        throw new Error(`Backup savedHosts entry "${label}" lanBaseUrl must use https://.`);
+      }
+      if (lanDashboardBaseUrl && !isSecureBaseUrl(lanDashboardBaseUrl)) {
+        throw new Error(
+          `Backup savedHosts entry "${label}" lanDashboardBaseUrl must use https://.`,
+        );
+      }
       return {
         id,
         label,
         baseUrl,
         dashboardBaseUrl,
+        ...(lanBaseUrl ? { lanBaseUrl } : {}),
+        ...(lanDashboardBaseUrl ? { lanDashboardBaseUrl } : {}),
+        ...(typeof row["autoRouteLan"] === "boolean" ? { autoRouteLan: row["autoRouteLan"] } : {}),
         ...(typeof row["activeProfile"] === "string"
           ? { activeProfile: row["activeProfile"] }
           : {}),

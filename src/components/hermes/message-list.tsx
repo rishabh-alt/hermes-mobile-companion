@@ -20,6 +20,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ImageLightbox } from "@/components/hermes/image-lightbox";
 import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
+import { formatMessageTime } from "@/lib/hermes/timestamps";
 import { visibleChatText } from "@/lib/hermes/transcript";
 import type { HermesMessage, ToolCall } from "@/lib/hermes/types";
 import { cn } from "@/lib/utils";
@@ -236,18 +237,39 @@ export function MessageBubble({ message, live, highlighted, onRetry, onReact }: 
           )}
         </MessageContent>
 
-        {!isUser && !live && message.text.trim() && !showActions && (
-          <div className="mt-1 flex items-center gap-1">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              className="h-6 w-6 text-muted-foreground hover:text-foreground"
-              aria-label={speaking ? "Stop reading aloud" : "Read aloud"}
-              onClick={toggleSpeak}
-            >
-              {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-            </Button>
+        {!live && (
+          <div
+            className={cn(
+              "mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums",
+              isUser && "justify-end",
+            )}
+          >
+            {message.createdAt > 0 && (
+              <span className="font-mono text-[10px] text-muted-foreground/80">
+                {formatMessageTime(message.createdAt)}
+              </span>
+            )}
+            {!isUser && message.model && (
+              <span className="truncate text-[10px] text-muted-foreground/70">
+                · {message.model.split("/").pop()}
+              </span>
+            )}
+            {!isUser && message.text.trim() && !showActions && (
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                aria-label={speaking ? "Stop reading aloud" : "Read aloud"}
+                onClick={toggleSpeak}
+              >
+                {speaking ? (
+                  <VolumeX className="h-3.5 w-3.5" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            )}
           </div>
         )}
 
