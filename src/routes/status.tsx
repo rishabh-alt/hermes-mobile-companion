@@ -132,7 +132,7 @@ function StatusRoute() {
       : typeof readout.data?.status?.["gateway_version"] === "string"
         ? readout.data.status["gateway_version"]
         : undefined;
-  const compat = rawVersion ? evaluateHostCompatibility(rawVersion) : null;
+  const compat = rawVersion ? evaluateHostCompatibility({ version: rawVersion }) : null;
 
   const handleReloadHost = async () => {
     setReloading(true);
@@ -182,12 +182,12 @@ function StatusRoute() {
             className={
               compat.status === "compatible"
                 ? "text-xs text-emerald-400"
-                : compat.status === "outdated" || compat.status === "migration_needed"
+                : compat.status === "outdated" || compat.status === "schema-mismatch"
                   ? "text-xs text-amber-400"
                   : "text-xs text-muted-foreground"
             }
           >
-            {compat.summary}
+            {compat.headline}
           </p>
         )}
         <div className="flex flex-wrap gap-2 pt-1">

@@ -229,7 +229,7 @@ function JobsRoute() {
                     </span>
                     <span className="text-muted-foreground">·</span>
                     <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {when(item.recordedAt)}
+                      {when(item.timestamp)}
                     </span>
                   </div>
                   <p className="truncate text-muted-foreground">{item.summary}</p>

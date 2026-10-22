@@ -271,8 +271,8 @@ type StreamdownPluginMap = NonNullable<MessageResponseProps["plugins"]>;
 const cachedPlugins: StreamdownPluginMap = {};
 
 export const MessageResponse = memo(
-  ({ className, children, ...props }: MessageResponseProps) => {
-    const text = typeof children === "string" ? children : "";
+  ({ className, ...props }: MessageResponseProps) => {
+    const text = typeof props.children === "string" ? props.children : "";
     const needsCode = text.includes("```");
     const needsMermaid = text.includes("```mermaid");
     const needsMath = text.includes("$$") || text.includes("\\[") || text.includes("\\(");
@@ -331,9 +331,7 @@ export const MessageResponse = memo(
         className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
         plugins={plugins}
         {...props}
-      >
-        {children}
-      </Streamdown>
+      />
     );
   },
   (prevProps, nextProps) =>
