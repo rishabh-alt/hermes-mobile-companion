@@ -1,4 +1,5 @@
 import { requireSecureBaseUrl } from "./client";
+import { selectEffectiveBaseUrl } from "./compat";
 import type { HermesConfig } from "./types";
 
 const SAFE_PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -105,7 +106,7 @@ export function composeGatewayUrl(
   if (!path.startsWith("/") || path.startsWith("//") || /[\\\r\n]/.test(path)) {
     throw new Error("Invalid gateway path.");
   }
-  const base = requireSecureBaseUrl(config.baseUrl);
+  const base = requireSecureBaseUrl(selectEffectiveBaseUrl(config));
   const profileName = config.activeProfile || "default";
   const prefix = root
     ? ""

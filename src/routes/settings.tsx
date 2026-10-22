@@ -33,13 +33,13 @@ import {
   createPhoneConfigBackup,
   resetPhoneConfigToDefaults,
 } from "@/lib/hermes/config-backup";
-import {
-  evaluateHostCompatibility,
-  resolveOptimalHostRoute,
-  type RouteProbeResult,
-} from "@/lib/hermes/compat";
+import { evaluateHostCompatibility, useActiveHostRoute } from "@/lib/hermes/compat";
 import { downloadTextFile } from "@/lib/hermes/export";
-import { buildNtfySubscriptionUrls, sendNtfyNotification } from "@/lib/hermes/ntfy-inbox";
+import {
+  buildNtfySubscriptionUrls,
+  sendNtfyNotification,
+  syncNtfyWebhookToHost,
+} from "@/lib/hermes/ntfy-inbox";
 import {
   addDashboardVaultCredential,
   applyHostUpdate,
@@ -278,7 +278,12 @@ function SettingsRoute() {
                       <AppearanceFields config={config} update={update} />
                     )}
                     {section.id === "notifications" && (
-                      <NotificationsFields config={config} update={update} />
+                      <NotificationsFields
+                        config={config}
+                        update={update}
+                        dashboardUrl={effectiveDashboardUrl}
+                        dashboardReady={dashboardReady}
+                      />
                     )}
                     {section.id === "about" && (
                       <AboutFields
@@ -457,14 +462,14 @@ function SavedHostsCard({
   return (
     <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium">Saved headless servers</p>
+        <p className="text-xs font-medium">Saved servers</p>
         <span className="text-[11px] text-muted-foreground">{savedHosts.length} saved</span>
       </div>
       <div className="flex gap-2">
         <Input
           value={labelDraft}
           onChange={(e) => setLabelDraft(e.target.value)}
-          placeholder="Server label (e.g. Old PC Headless)"
+          placeholder="Name this server (e.g. Home Mac)"
           className="h-8 text-xs"
         />
         <Button
@@ -541,7 +546,7 @@ function AddressQrCard({ baseUrl }: { baseUrl: string }) {
           viewBox={`0 0 ${size} ${size}`}
           className="h-36 w-36"
           role="img"
-          aria-label="Gateway HTTPS address QR code"
+          aria-label="Server HTTPS address QR code"
         >
           {matrix.flatMap((row, r) =>
             row.map((cell, c) =>
@@ -552,10 +557,25 @@ function AddressQrCard({ baseUrl }: { baseUrl: string }) {
       </div>
       <p className="font-mono text-[11px] text-foreground">{baseUrl}</p>
       <p className="text-[11px] text-muted-foreground">
-        Address-only QR — contains zero tokens or passwords.
+        Shares your server link only — never your token or password.
       </p>
     </div>
   );
+}
+
+function formatProbeStatus(status: ProbeStatus): string {
+  switch (status) {
+    case "ok":
+      return "Ready";
+    case "auth":
+      return "Needs token";
+    case "transport":
+      return "Unreachable";
+    case "unsupported":
+      return "Not supported";
+    case "failed":
+      return "Error";
+  }
 }
 
 function ConnectionFields({
@@ -580,8 +600,8 @@ function ConnectionFields({
   const [cameraActive, setCameraActive] = useState(false);
   const [qrInput, setQrInput] = useState("");
   const [qrNote, setQrNote] = useState<string | null>(null);
-  const [routingProbe, setRoutingProbe] = useState<RouteProbeResult | null>(null);
-  const [testingRoute, setTestingRoute] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const { snapshot: routingProbe, probing: testingRoute, probeNow } = useActiveHostRoute(config);
   const qrFileRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -606,7 +626,7 @@ function ConnectionFields({
         // Keep existing dashboardBaseUrl if custom path is used.
       }
       if (parsed.oneTimeCode) {
-        setQrNote("Exchanging one-time pairing code with host…");
+        setQrNote("Connecting with one-time pairing code…");
         const exchanged = await exchangePairingCode(parsed.baseUrl, parsed.oneTimeCode);
         update({
           baseUrl: parsed.baseUrl,
@@ -615,12 +635,12 @@ function ConnectionFields({
         });
         setQrNote(
           exchanged.token
-            ? "Paired gateway address and token via one-time code."
-            : "Gateway address saved. Enter your token and Dashboard login below.",
+            ? "Connected! Server address and token were paired automatically."
+            : "Server address saved. Enter your access token below.",
         );
       } else {
         update({ baseUrl: parsed.baseUrl, dashboardBaseUrl: derivedDashboard });
-        setQrNote("Gateway HTTPS address applied. Enter your token and Dashboard login below.");
+        setQrNote("Server address saved. Enter your access token below.");
       }
       stopCamera();
       setQrInput("");
@@ -628,14 +648,22 @@ function ConnectionFields({
       haptic("done");
     } catch (err) {
       haptic("error");
-      setQrNote(err instanceof Error ? err.message : "Invalid gateway QR payload.");
+      setQrNote(err instanceof Error ? err.message : "Could not read that QR code.");
+    }
+  };
+
+  const attachVideoElement = (node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current && node.srcObject !== streamRef.current) {
+      node.srcObject = streamRef.current;
+      void node.play().catch(() => undefined);
     }
   };
 
   const startCamera = async () => {
     setQrNote(null);
     if (!navigator.mediaDevices?.getUserMedia) {
-      setQrNote("Camera access is not available here. Use Scan QR photo or paste the URL.");
+      setQrNote("Camera isn't available in this browser. Choose a QR photo or paste the link.");
       return;
     }
     try {
@@ -656,28 +684,30 @@ function ConnectionFields({
         }
       ).BarcodeDetector;
       if (!Detector) {
-        setQrNote("Live QR decoding requires BarcodeDetector. Capture a photo or paste below.");
+        setQrNote("Use Scan QR photo below if your browser doesn't auto-detect from live video.");
         return;
       }
       const detector = new Detector({ formats: ["qr_code"] });
       const poll = async () => {
-        if (!streamRef.current || !videoRef.current) return;
-        try {
-          const found = await detector.detect(videoRef.current);
-          const first = found[0]?.rawValue;
-          if (first) {
-            await applyScannedAddress(first);
-            return;
+        if (!streamRef.current) return;
+        if (videoRef.current && videoRef.current.readyState >= 2) {
+          try {
+            const found = await detector.detect(videoRef.current);
+            const first = found[0]?.rawValue;
+            if (first) {
+              await applyScannedAddress(first);
+              return;
+            }
+          } catch {
+            // Continue scanning frames while camera is open.
           }
-        } catch {
-          // Continue scanning frames while camera is open.
         }
         if (streamRef.current) window.setTimeout(() => void poll(), 350);
       };
       void poll();
     } catch {
       stopCamera();
-      setQrNote("Camera permission was denied. Use Scan QR photo or paste the URL.");
+      setQrNote("Camera permission was blocked. Use Scan QR photo or paste your link below.");
     }
   };
 
@@ -685,7 +715,7 @@ function ConnectionFields({
     <div className="space-y-3">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <Label htmlFor="baseUrl">Gateway address</Label>
+          <Label htmlFor="baseUrl">Server address</Label>
           <div className="flex items-center gap-1">
             {config.baseUrl.trim().startsWith("https://") && (
               <Button
@@ -702,13 +732,18 @@ function ConnectionFields({
               size="sm"
               variant="ghost"
               onClick={() => {
-                if (qrOpen) stopCamera();
-                setQrOpen((prev) => !prev);
+                if (qrOpen) {
+                  stopCamera();
+                  setQrOpen(false);
+                } else {
+                  setQrOpen(true);
+                  void startCamera();
+                }
                 setQrNote(null);
               }}
             >
               <QrCode className="mr-1.5 h-3.5 w-3.5" />
-              Address QR
+              {qrOpen ? "Close scanner" : "Scan QR"}
             </Button>
           </div>
         </div>
@@ -724,89 +759,23 @@ function ConnectionFields({
           }}
         />
         <p className="text-xs text-muted-foreground">
-          HTTPS Tailscale Serve or tunnel URL. Plain HTTP is rejected to protect your token.
+          Your Hermes HTTPS link (such as your Tailscale address).
         </p>
-      </div>
-      <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-medium">LAN ↔ Tailscale auto-routing</p>
-            <p className="text-xs text-muted-foreground">
-              Prefer low-latency home Wi-Fi HTTPS when reachable; fall back to Tailscale away.
-            </p>
-          </div>
-          <Switch
-            checked={Boolean(config.autoRouteLan)}
-            onCheckedChange={(autoRouteLan) => update({ autoRouteLan })}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="lanBaseUrl" className="text-xs">
-            LAN HTTPS gateway URL (optional)
-          </Label>
-          <Input
-            id="lanBaseUrl"
-            inputMode="url"
-            autoCapitalize="none"
-            placeholder="https://mac.local:8443"
-            value={config.lanBaseUrl ?? ""}
-            onChange={(event) => {
-              onClearProbes();
-              setRoutingProbe(null);
-              update({ lanBaseUrl: event.target.value });
-            }}
-            className="h-8 text-xs"
-          />
-        </div>
-        {(config.lanBaseUrl?.trim() || config.baseUrl.trim()) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled={testingRoute}
-              onClick={async () => {
-                setTestingRoute(true);
-                try {
-                  const res = await resolveOptimalHostRoute(config);
-                  setRoutingProbe(res);
-                  if (res.activeBaseUrl && res.activeBaseUrl !== config.baseUrl) {
-                    update({ baseUrl: res.activeBaseUrl });
-                  }
-                  haptic("done");
-                } finally {
-                  setTestingRoute(false);
-                }
-              }}
-            >
-              {testingRoute ? "Probing routes…" : "Probe & select fastest route"}
-            </Button>
-            {routingProbe && (
-              <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                Active: {routingProbe.route.toUpperCase()} · {routingProbe.latencyMs}ms
-              </span>
-            )}
-          </div>
-        )}
-        {routingProbe?.fallbackReason && (
-          <p className="text-[11px] text-muted-foreground">{routingProbe.fallbackReason}</p>
-        )}
       </div>
       {shareQrOpen && config.baseUrl.trim() && <AddressQrCard baseUrl={config.baseUrl} />}
       {qrOpen && (
         <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
-          <p className="text-xs font-medium">Address-only QR &amp; one-time code pairing</p>
+          <p className="text-xs font-medium">Scan server QR code</p>
           <p className="text-xs text-muted-foreground">
-            Scan an HTTPS gateway QR or paste a short-lived one-time pairing code. Raw bearer tokens
-            and passwords in QR payloads are rejected.
+            Point your camera at your server's QR code, or paste a pairing code below.
           </p>
           {cameraActive && (
             <div className="space-y-2">
               <video
-                ref={videoRef}
+                ref={attachVideoElement}
                 muted
                 playsInline
+                autoPlay
                 className="h-44 w-full rounded-lg bg-black object-cover"
               />
               <Button type="button" size="sm" variant="outline" onClick={stopCamera}>
@@ -814,21 +783,10 @@ function ConnectionFields({
               </Button>
             </div>
           )}
-          <div className="flex gap-2">
-            <Input
-              value={qrInput}
-              autoCapitalize="none"
-              placeholder="https://your-mac.example.ts.net or one-time code"
-              onChange={(event) => setQrInput(event.target.value)}
-            />
-            <Button type="button" size="sm" onClick={() => void applyScannedAddress(qrInput)}>
-              Apply
-            </Button>
-          </div>
           <div className="flex flex-wrap gap-2">
             {!cameraActive && (
               <Button type="button" size="sm" variant="outline" onClick={() => void startCamera()}>
-                Live camera scan
+                Open camera
               </Button>
             )}
             <Button
@@ -838,6 +796,17 @@ function ConnectionFields({
               onClick={() => qrFileRef.current?.click()}
             >
               Scan QR photo
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={qrInput}
+              autoCapitalize="none"
+              placeholder="Paste link or one-time pairing code"
+              onChange={(event) => setQrInput(event.target.value)}
+            />
+            <Button type="button" size="sm" onClick={() => void applyScannedAddress(qrInput)}>
+              Apply
             </Button>
           </div>
           <input
@@ -858,9 +827,7 @@ function ConnectionFields({
                 }
               ).BarcodeDetector;
               if (!Detector) {
-                setQrNote(
-                  "This WebView does not expose BarcodeDetector. Paste the https URL above.",
-                );
+                setQrNote("Could not scan photo automatically. Paste your https:// link above.");
                 return;
               }
               try {
@@ -874,7 +841,7 @@ function ConnectionFields({
                 }
                 await applyScannedAddress(first);
               } catch {
-                setQrNote("Could not decode that QR image. Paste the https URL above.");
+                setQrNote("Could not read that QR image. Paste your https:// link above.");
               }
             }}
           />
@@ -887,57 +854,156 @@ function ConnectionFields({
           id="token"
           type="password"
           autoCapitalize="none"
+          placeholder="Paste your server token (if required)"
           value={config.token}
           onChange={(event) => update({ token: event.target.value })}
         />
       </div>
-      <SavedHostsCard config={config} update={update} />
-      <div className="space-y-2">
-        <Label htmlFor="fallback">Fallback model</Label>
-        <Input
-          id="fallback"
-          autoCapitalize="none"
-          placeholder="used if the main model fails"
-          value={config.fallbackModel}
-          onChange={(event) => update({ fallbackModel: event.target.value })}
-        />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          onClick={onCheck}
+          disabled={checking || !config.baseUrl.trim()}
+          className="flex-1"
+        >
+          {checking ? "Testing connection…" : "Test connection"}
+        </Button>
+        <Button asChild variant="outline">
+          <Link to="/status">Server status</Link>
+        </Button>
       </div>
-      <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
-        <div>
-          <p className="text-sm font-medium">Live agent channel</p>
-          <p className="text-xs text-muted-foreground">Show thoughts and tool activity.</p>
-        </div>
-        <Switch
-          checked={config.wsEnabled}
-          onCheckedChange={(value) => update({ wsEnabled: value })}
-        />
-      </div>
-      <DashboardPanel config={config} update={update} onSignedIn={onSignedIn} />
-      <Button
-        type="button"
-        onClick={onCheck}
-        disabled={checking || !config.baseUrl.trim()}
-        className="w-full"
-      >
-        {checking ? "Checking…" : "Check host"}
-      </Button>
       {probes.length > 0 && (
-        <ul className="space-y-1 text-xs">
+        <ul className="space-y-1 rounded-xl border border-border/60 bg-secondary/20 p-2.5 text-xs">
           {probes.map((probe) => (
-            <li key={probe.id}>
-              {probe.label}: {probe.status}
-              {probe.detail ? ` — ${probe.detail}` : ""}
+            <li key={probe.id} className="flex items-center justify-between gap-2">
+              <span className="font-medium text-foreground">{probe.label}</span>
+              <span
+                className={
+                  probe.status === "ok"
+                    ? "text-emerald-400"
+                    : probe.status === "auth" || probe.status === "transport"
+                      ? "text-amber-400"
+                      : "text-muted-foreground"
+                }
+              >
+                {formatProbeStatus(probe.status)}
+                {probe.detail ? ` · ${probe.detail}` : ""}
+              </span>
             </li>
           ))}
         </ul>
       )}
-      <Button asChild variant="outline" className="w-full">
-        <Link to="/status">Connection &amp; usage</Link>
-      </Button>
-      <Button asChild variant="outline" className="w-full">
-        <Link to="/debug">Debug log</Link>
-      </Button>
-      <PhoneConfigBackupCard config={config} />
+      <DashboardPanel
+        config={config}
+        update={update}
+        onSignedIn={onSignedIn}
+        showModelFields={false}
+      />
+
+      <div className="pt-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full justify-between px-2 text-xs text-muted-foreground"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          <span>More connection options (saved servers, Wi-Fi shortcut, backup)</span>
+          <span>{showAdvanced ? "Hide" : "Show"}</span>
+        </Button>
+      </div>
+
+      {showAdvanced && (
+        <div className="space-y-3 pt-1">
+          <SavedHostsCard config={config} update={update} />
+          <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">Home Wi-Fi shortcut (LAN)</p>
+                <p className="text-xs text-muted-foreground">
+                  Automatically probes your local Wi-Fi link on app wake and network changes, and
+                  falls back to your remote Tailscale link when away.
+                </p>
+              </div>
+              <Switch
+                checked={Boolean(config.autoRouteLan)}
+                onCheckedChange={(autoRouteLan) => update({ autoRouteLan })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="lanBaseUrl" className="text-xs">
+                Local Wi-Fi HTTPS link (optional)
+              </Label>
+              <Input
+                id="lanBaseUrl"
+                inputMode="url"
+                autoCapitalize="none"
+                placeholder="https://mac.local:8443"
+                value={config.lanBaseUrl ?? ""}
+                onChange={(event) => {
+                  onClearProbes();
+                  update({ lanBaseUrl: event.target.value });
+                }}
+                className="h-8 text-xs"
+              />
+            </div>
+            {(config.lanBaseUrl?.trim() || config.baseUrl.trim()) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={testingRoute}
+                  onClick={async () => {
+                    await probeNow();
+                    haptic("done");
+                  }}
+                >
+                  {testingRoute ? "Checking speed…" : "Re-probe route now"}
+                </Button>
+                {routingProbe && (
+                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                    Active: {routingProbe.route.toUpperCase()} · {routingProbe.latencyMs}ms
+                  </span>
+                )}
+              </div>
+            )}
+            {routingProbe?.fallbackReason && (
+              <p className="text-[11px] text-muted-foreground">{routingProbe.fallbackReason}</p>
+            )}
+          </div>
+          <div className="space-y-2 rounded-xl border border-border/70 p-3">
+            <Label htmlFor="fallback" className="text-xs">
+              Backup model (optional)
+            </Label>
+            <Input
+              id="fallback"
+              autoCapitalize="none"
+              placeholder="Used automatically if your main model is busy"
+              value={config.fallbackModel}
+              onChange={(event) => update({ fallbackModel: event.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-xl border border-border/70 p-3">
+            <div>
+              <p className="text-sm font-medium">Live thinking &amp; tool activity</p>
+              <p className="text-xs text-muted-foreground">
+                Stream step-by-step progress while Hermes works.
+              </p>
+            </div>
+            <Switch
+              checked={config.wsEnabled}
+              onCheckedChange={(value) => update({ wsEnabled: value })}
+            />
+          </div>
+          <PhoneConfigBackupCard config={config} />
+          <Button asChild variant="outline" size="sm" className="w-full">
+            <Link to="/debug">Open debug log</Link>
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1097,9 +1163,13 @@ function AppearanceFields({
 function NotificationsFields({
   config,
   update,
+  dashboardUrl,
+  dashboardReady,
 }: {
   config: ReturnType<typeof useHermesConfig>["config"];
   update: ReturnType<typeof useHermesConfig>["update"];
+  dashboardUrl: string;
+  dashboardReady: boolean;
 }) {
   const supported = typeof window !== "undefined" && "Notification" in window;
   const [permission, setPermission] = useState<string>(
@@ -1202,7 +1272,12 @@ function NotificationsFields({
           />
         </div>
       </div>
-      <NtfyPushSettingsCard config={config} update={update} />
+      <NtfyPushSettingsCard
+        config={config}
+        update={update}
+        dashboardUrl={dashboardUrl}
+        dashboardReady={dashboardReady}
+      />
     </div>
   );
 }
@@ -1210,11 +1285,16 @@ function NotificationsFields({
 function NtfyPushSettingsCard({
   config,
   update,
+  dashboardUrl,
+  dashboardReady,
 }: {
   config: ReturnType<typeof useHermesConfig>["config"];
   update: ReturnType<typeof useHermesConfig>["update"];
+  dashboardUrl: string;
+  dashboardReady: boolean;
 }) {
   const [testingPush, setTestingPush] = useState(false);
+  const [syncingHost, setSyncingHost] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const subUrls = useMemo(
     () =>
@@ -1226,10 +1306,11 @@ function NtfyPushSettingsCard({
     <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-medium">ntfy push relay (background wake)</p>
+          <p className="text-sm font-medium">ntfy push relay &amp; host webhook</p>
           <p className="text-xs text-muted-foreground">
-            Relay approvals and cron failures to an HTTPS ntfy topic so your phone wakes even when
-            the companion app is closed.
+            Relays live watch alerts from any screen while the app is open. For alerts when the app
+            is completely closed, sync the webhook to your Hermes host below or publish from host
+            cron jobs.
           </p>
         </div>
         <Switch
@@ -1267,53 +1348,98 @@ function NtfyPushSettingsCard({
         </div>
       </div>
       {subUrls && (
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <p className="truncate font-mono text-[11px] text-muted-foreground">{subUrls.httpsUrl}</p>
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 px-2.5 text-xs"
-              disabled={testingPush}
-              onClick={async () => {
-                setTestingPush(true);
-                setPushNote(null);
-                try {
-                  await sendNtfyNotification({
-                    serverUrl: config.ntfyServerUrl,
-                    topic: config.ntfyTopic ?? "",
-                    title: "Hermes Companion test push",
-                    message: "Background approval and cron alerts are connected.",
-                    priority: "high",
-                  });
-                  setPushNote("Sent test notification to ntfy topic.");
-                  haptic("done");
-                } catch (err) {
-                  haptic("error");
-                  setPushNote(
-                    err instanceof Error ? err.message : "Could not send test push to ntfy.",
-                  );
-                } finally {
-                  setTestingPush(false);
-                }
-              }}
-            >
-              {testingPush ? "Sending…" : "Send test push"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2.5 text-xs"
-              onClick={() => {
-                void navigator.clipboard?.writeText(subUrls.httpsUrl);
-                setPushNote("Copied topic URL for the ntfy mobile app.");
-                haptic("tap");
-              }}
-            >
-              Copy URL
-            </Button>
+        <div className="space-y-2 pt-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="truncate font-mono text-[11px] text-muted-foreground">
+              {subUrls.httpsUrl}
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-xs"
+                disabled={testingPush}
+                onClick={async () => {
+                  setTestingPush(true);
+                  setPushNote(null);
+                  try {
+                    await sendNtfyNotification({
+                      serverUrl: config.ntfyServerUrl,
+                      topic: config.ntfyTopic ?? "",
+                      title: "Hermes Companion test push",
+                      message: "Background approval and cron alerts are connected.",
+                      priority: "high",
+                    });
+                    setPushNote("Sent test notification to ntfy topic.");
+                    haptic("done");
+                  } catch (err) {
+                    haptic("error");
+                    setPushNote(
+                      err instanceof Error ? err.message : "Could not send test push to ntfy.",
+                    );
+                  } finally {
+                    setTestingPush(false);
+                  }
+                }}
+              >
+                {testingPush ? "Sending…" : "Send test push"}
+              </Button>
+              {dashboardReady && dashboardUrl && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-xs"
+                  disabled={syncingHost}
+                  onClick={async () => {
+                    setSyncingHost(true);
+                    setPushNote(null);
+                    try {
+                      const res = await syncNtfyWebhookToHost(dashboardUrl, config);
+                      setPushNote(res.detail);
+                      haptic(res.synced ? "done" : "error");
+                    } catch (err) {
+                      haptic("error");
+                      setPushNote(
+                        err instanceof Error ? err.message : "Could not sync webhook to host.",
+                      );
+                    } finally {
+                      setSyncingHost(false);
+                    }
+                  }}
+                >
+                  {syncingHost ? "Syncing…" : "Sync webhook to host"}
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(subUrls.httpsUrl);
+                  setPushNote("Copied topic URL for the ntfy mobile app.");
+                  haptic("tap");
+                }}
+              >
+                Copy URL
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => {
+                  const cmd = `curl -H "Title: Hermes host alert" -H "Priority: high" -d "Job completed on $(hostname)" ${subUrls.httpsUrl}`;
+                  void navigator.clipboard?.writeText(cmd);
+                  setPushNote("Copied host-side curl command for cron or shell hooks.");
+                  haptic("tap");
+                }}
+              >
+                Copy host curl
+              </Button>
+            </div>
           </div>
         </div>
       )}

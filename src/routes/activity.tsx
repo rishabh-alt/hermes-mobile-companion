@@ -14,7 +14,7 @@ import {
 import { answerClarify, type ClarifyRequest } from "@/lib/hermes/clarify";
 import { HermesError } from "@/lib/hermes/client";
 import { useHermesConfig } from "@/lib/hermes/config";
-import { recordCronInboxItem, sendNtfyNotification } from "@/lib/hermes/ntfy-inbox";
+import { processWatchNotificationFrame } from "@/lib/hermes/ntfy-inbox";
 import {
   cronAction,
   fetchActiveSessionPrompts,
@@ -34,17 +34,6 @@ interface PendingPromptMap {
     approval: ApprovalRequest | null;
     clarify: ClarifyRequest | null;
   };
-}
-
-function notifyBrowser(title: string, body: string) {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
-  if (Notification.permission === "granted") {
-    try {
-      new Notification(title, { body });
-    } catch {
-      // Ignore notification constructor restrictions in mobile webviews
-    }
-  }
 }
 
 function ActivityRoute() {
@@ -70,86 +59,17 @@ function ActivityRoute() {
       config,
       "/api/activity/watch",
       (frame) => {
-        const prefs = config.notificationPrefs ?? {
-          turnComplete: true,
-          approvals: true,
-          cronFailures: true,
-        };
-        const relayNtfy = (
-          title: string,
-          message: string,
-          priority?: "default" | "high" | "urgent",
-        ) => {
-          if (config.ntfyEnabled && config.ntfyTopic) {
-            void sendNtfyNotification({
-              serverUrl: config.ntfyServerUrl ?? "https://ntfy.sh",
-              topic: config.ntfyTopic,
-              title,
-              message,
-              ...(priority ? { priority } : {}),
-            });
-          }
-        };
-        if (frame.event === "session.changed") {
+        if (
+          frame.event === "session.changed" ||
+          frame.event === "approval.requested" ||
+          frame.event === "approval.request" ||
+          frame.event === "cron.failed" ||
+          frame.event === "job.failed" ||
+          frame.event === "session.completed" ||
+          frame.event === "assistant.completed"
+        ) {
           refresh();
-        } else if (frame.event === "approval.requested" || frame.event === "approval.request") {
-          refresh();
-          const cmd = String(frame.payload["command"] ?? "A tool command awaits approval");
-          const sessionId =
-            typeof frame.payload["session_id"] === "string"
-              ? frame.payload["session_id"]
-              : undefined;
-          recordCronInboxItem({
-            jobName: "Tool approval requested",
-            status: "approval",
-            summary: cmd.slice(0, 160),
-            ...(sessionId ? { sessionId } : {}),
-          });
-          if (prefs.approvals) {
-            toast.warning(`Approval needed: ${cmd.slice(0, 80)}`);
-            notifyBrowser("Hermes approval needed", cmd);
-            relayNtfy("Hermes approval needed", cmd, "high");
-          }
-        } else if (frame.event === "cron.failed" || frame.event === "job.failed") {
-          refresh();
-          const name = String(frame.payload["name"] ?? frame.payload["job_id"] ?? "Scheduled job");
-          const summary = String(
-            frame.payload["summary"] ?? frame.payload["error"] ?? "Cron execution failed",
-          );
-          const sessionId =
-            typeof frame.payload["session_id"] === "string"
-              ? frame.payload["session_id"]
-              : undefined;
-          recordCronInboxItem({
-            jobName: name,
-            status: "failed",
-            summary,
-            ...(sessionId ? { sessionId } : {}),
-          });
-          if (prefs.cronFailures ?? true) {
-            toast.error(`Scheduled job failed: ${name}`);
-            notifyBrowser("Hermes job failed", name);
-            relayNtfy(`Hermes job failed: ${name}`, summary, "high");
-          }
-        } else if (frame.event === "session.completed" || frame.event === "assistant.completed") {
-          refresh();
-          const title = String(frame.payload["title"] ?? "Hermes finished a background turn");
-          const summary = String(frame.payload["summary"] ?? title);
-          const sessionId =
-            typeof frame.payload["session_id"] === "string"
-              ? frame.payload["session_id"]
-              : undefined;
-          recordCronInboxItem({
-            jobName: title,
-            status: "completed",
-            summary,
-            ...(sessionId ? { sessionId } : {}),
-          });
-          if (prefs.turnComplete) {
-            toast.info(title);
-            notifyBrowser("Hermes turn complete", title);
-            relayNtfy("Hermes turn complete", title, "default");
-          }
+          processWatchNotificationFrame(frame, config);
         }
       },
       controller.signal,

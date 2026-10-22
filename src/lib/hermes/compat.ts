@@ -1,5 +1,5 @@
+import { useCallback, useEffect, useState } from "react";
 import { isSecureBaseUrl } from "./client";
-import { composeGatewayUrl } from "./profiles";
 import type { HermesConfig } from "./types";
 
 export const MIN_SUPPORTED_HERMES_VERSION = "0.20.0";
@@ -111,8 +111,42 @@ export interface RouteProbeResult {
   route: "lan" | "tailscale";
   activeBaseUrl: string;
   activeDashboardUrl: string;
+  lanBaseUrl?: string | undefined;
+  tailscaleBaseUrl?: string | undefined;
   latencyMs: number;
+  checkedAt: number;
   fallbackReason?: string | undefined;
+}
+
+let activeRouteSnapshot: RouteProbeResult | null = null;
+
+export function getActiveRouteSnapshot(): RouteProbeResult | null {
+  return activeRouteSnapshot;
+}
+
+export function setActiveRouteSnapshot(snapshot: RouteProbeResult | null): void {
+  activeRouteSnapshot = snapshot;
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new CustomEvent("hermes-route-change"));
+  }
+}
+
+/**
+ * Returns the effective gateway base URL for a config, honoring an active verified LAN route
+ * when `autoRouteLan` is enabled without mutating or clobbering `config.baseUrl`.
+ */
+export function selectEffectiveBaseUrl(config: HermesConfig): string {
+  const lanUrl = (config.lanBaseUrl ?? "").trim().replace(/\/+$/, "");
+  if (
+    config.autoRouteLan &&
+    lanUrl &&
+    isSecureBaseUrl(lanUrl) &&
+    activeRouteSnapshot?.route === "lan" &&
+    activeRouteSnapshot.lanBaseUrl === lanUrl
+  ) {
+    return lanUrl;
+  }
+  return config.baseUrl.trim();
 }
 
 export async function probeFastEndpoint(
@@ -148,40 +182,78 @@ export async function resolveOptimalHostRoute(
   config: HermesConfig,
   timeoutMs = 1200,
 ): Promise<RouteProbeResult> {
-  const tailnetUrl = config.baseUrl.trim();
-  const tailnetDash = config.dashboardBaseUrl.trim();
-  const lanUrl = (config.lanBaseUrl ?? "").trim();
-  const lanDash = (config.lanDashboardBaseUrl ?? "").trim();
+  const tailnetUrl = config.baseUrl.trim().replace(/\/+$/, "");
+  const tailnetDash = config.dashboardBaseUrl.trim().replace(/\/+$/, "");
+  const lanUrl = (config.lanBaseUrl ?? "").trim().replace(/\/+$/, "");
+  const lanDash = (config.lanDashboardBaseUrl ?? "").trim().replace(/\/+$/, "");
 
   if (config.autoRouteLan && isSecureBaseUrl(lanUrl)) {
     const lanProbe = await probeFastEndpoint(lanUrl, config.token, timeoutMs);
     if (lanProbe.ok) {
-      return {
+      const result: RouteProbeResult = {
         route: "lan",
         activeBaseUrl: lanUrl,
         activeDashboardUrl: lanDash || tailnetDash,
+        lanBaseUrl: lanUrl,
+        tailscaleBaseUrl: tailnetUrl,
         latencyMs: lanProbe.latencyMs,
+        checkedAt: Date.now(),
       };
+      setActiveRouteSnapshot(result);
+      return result;
     }
     const tailProbe = await probeFastEndpoint(tailnetUrl, config.token, timeoutMs * 2);
-    return {
+    const fallbackResult: RouteProbeResult = {
       route: "tailscale",
       activeBaseUrl: tailnetUrl,
       activeDashboardUrl: tailnetDash,
+      lanBaseUrl: lanUrl,
+      tailscaleBaseUrl: tailnetUrl,
       latencyMs: tailProbe.latencyMs,
+      checkedAt: Date.now(),
       fallbackReason: "LAN endpoint unreachable; routed via Tailscale.",
     };
+    setActiveRouteSnapshot(fallbackResult);
+    return fallbackResult;
   }
 
-  const probe = await probeFastEndpoint(
-    composeGatewayUrl(config, "").replace(/\/+$/, "") || tailnetUrl,
-    config.token,
-    timeoutMs * 2,
-  );
-  return {
+  const probe = await probeFastEndpoint(tailnetUrl, config.token, timeoutMs * 2);
+  const directResult: RouteProbeResult = {
     route: "tailscale",
     activeBaseUrl: tailnetUrl,
     activeDashboardUrl: tailnetDash,
+    ...(lanUrl ? { lanBaseUrl: lanUrl } : {}),
+    tailscaleBaseUrl: tailnetUrl,
     latencyMs: probe.latencyMs,
+    checkedAt: Date.now(),
+  };
+  setActiveRouteSnapshot(directResult);
+  return directResult;
+}
+
+export function useActiveHostRoute(config: HermesConfig) {
+  const [snapshot, setSnapshot] = useState<RouteProbeResult | null>(() => getActiveRouteSnapshot());
+  const [probing, setProbing] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setSnapshot(getActiveRouteSnapshot());
+    window.addEventListener("hermes-route-change", sync);
+    return () => window.removeEventListener("hermes-route-change", sync);
+  }, []);
+
+  const probeNow = useCallback(async () => {
+    setProbing(true);
+    try {
+      return await resolveOptimalHostRoute(config);
+    } finally {
+      setProbing(false);
+    }
+  }, [config]);
+
+  return {
+    snapshot,
+    probing,
+    probeNow,
+    effectiveBaseUrl: selectEffectiveBaseUrl(config),
   };
 }

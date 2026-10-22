@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { GatewayPage, Row } from "@/components/hermes/gateway-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { evaluateHostCompatibility } from "@/lib/hermes/compat";
+import { evaluateHostCompatibility, useActiveHostRoute } from "@/lib/hermes/compat";
 import { useHermesConfig } from "@/lib/hermes/config";
 import {
   fetchModelOptions,
@@ -122,6 +122,12 @@ function extractNestedRows(
 function StatusRoute() {
   const { config, update } = useHermesConfig();
   const readout = useGateway<Readout>(load);
+  const {
+    snapshot: routeSnapshot,
+    probing: probingRoute,
+    probeNow,
+    effectiveBaseUrl,
+  } = useActiveHostRoute(config);
   const [reloading, setReloading] = useState(false);
   const [fallbackDraft, setFallbackDraft] = useState(config.fallbackModel);
   const reachable = Boolean(readout.data?.status) && !readout.error;
@@ -151,12 +157,17 @@ function StatusRoute() {
   return (
     <GatewayPage
       title="Connection & Host"
-      subtitle={config.baseUrl || "not connected"}
+      subtitle={effectiveBaseUrl || "not connected"}
       loading={readout.loading}
       unavailable={false}
       error={readout.error}
       configured={readout.configured}
-      onRefresh={readout.refresh}
+      onRefresh={() => {
+        if (config.autoRouteLan && config.lanBaseUrl?.trim()) {
+          void probeNow();
+        }
+        readout.refresh();
+      }}
     >
       <div className="mb-4 space-y-3 rounded-xl border border-border/70 bg-secondary/20 p-3">
         <div className="flex items-center justify-between gap-2">
@@ -175,8 +186,27 @@ function StatusRoute() {
           <span className="text-xs text-muted-foreground">Profile: {config.activeProfile}</span>
         </div>
         <p className="truncate font-mono text-xs text-muted-foreground">
-          {config.baseUrl || "No HTTPS gateway configured"}
+          {effectiveBaseUrl || "No HTTPS gateway configured"}
         </p>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-mono tabular-nums text-foreground">
+            Route:{" "}
+            {routeSnapshot
+              ? `${routeSnapshot.route.toUpperCase()} · ${routeSnapshot.latencyMs}ms`
+              : config.autoRouteLan && config.lanBaseUrl?.trim()
+                ? "Auto (probing…)"
+                : "Tailscale / Direct"}
+          </span>
+          {config.lanBaseUrl?.trim() && (
+            <span className="truncate font-mono text-[11px]">
+              · LAN: {config.lanBaseUrl.trim()} ({config.autoRouteLan ? "auto-switch on" : "manual"}
+              )
+            </span>
+          )}
+        </div>
+        {routeSnapshot?.fallbackReason && (
+          <p className="text-[11px] text-muted-foreground">{routeSnapshot.fallbackReason}</p>
+        )}
         {compat && (
           <p
             className={
@@ -191,9 +221,19 @@ function StatusRoute() {
           </p>
         )}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button type="button" size="sm" variant="outline" onClick={readout.refresh}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (config.lanBaseUrl?.trim()) {
+                void probeNow();
+              }
+              readout.refresh();
+            }}
+          >
             <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            Ping host
+            {probingRoute ? "Probing…" : "Ping host"}
           </Button>
           <Button
             type="button"

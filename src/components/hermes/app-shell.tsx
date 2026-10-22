@@ -4,7 +4,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AppLockGate } from "@/components/hermes/app-lock-gate";
 import { SessionDrawer } from "@/components/hermes/session-drawer";
 import { Button } from "@/components/ui/button";
+import { resolveOptimalHostRoute, setActiveRouteSnapshot } from "@/lib/hermes/compat";
+import { useHermesConfig } from "@/lib/hermes/config";
 import { haptic } from "@/lib/hermes/haptics";
+import { processWatchNotificationFrame } from "@/lib/hermes/ntfy-inbox";
+import { followHostWatch } from "@/lib/hermes/watch";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -17,6 +21,7 @@ interface Props {
 
 export function AppShell({ title, subtitle, right, activeSessionId, children }: Props) {
   const [open, setOpen] = useState(false);
+  const { config, configured } = useHermesConfig();
 
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
@@ -24,6 +29,44 @@ export function AppShell({ title, subtitle, right, activeSessionId, children }: 
       document.body.style.overflow = "";
     };
   }, [open]);
+
+  // Automatic LAN <-> Tailscale fast-probe routing on mount, config change, network change, and foregrounding
+  useEffect(() => {
+    if (!configured) {
+      setActiveRouteSnapshot(null);
+      return;
+    }
+    if (!config.autoRouteLan || !config.lanBaseUrl?.trim()) {
+      setActiveRouteSnapshot(null);
+      return;
+    }
+    const probe = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void resolveOptimalHostRoute(config).catch(() => undefined);
+    };
+    probe();
+    window.addEventListener("online", probe);
+    document.addEventListener("visibilitychange", probe);
+    return () => {
+      window.removeEventListener("online", probe);
+      document.removeEventListener("visibilitychange", probe);
+    };
+  }, [configured, config]);
+
+  // App-wide background watch listener so ntfy relay and cron inbox work on any screen
+  useEffect(() => {
+    if (!configured) return;
+    const controller = new AbortController();
+    void followHostWatch(
+      config,
+      "/api/activity/watch",
+      (frame) => {
+        processWatchNotificationFrame(frame, config);
+      },
+      controller.signal,
+    ).catch(() => undefined);
+    return () => controller.abort();
+  }, [configured, config]);
 
   return (
     <AppLockGate>
