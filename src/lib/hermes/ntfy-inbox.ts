@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { isSecureBaseUrl } from "./client";
 import { saveDashboardValue } from "./dashboard";
 import type { HermesConfig } from "./types";
-import type { HostWatchFrame } from "./watch";
+import type { WatchFrame } from "./watch";
 
 const CRON_INBOX_KEY = "hermes.cron_inbox.v1";
 const MAX_INBOX_ITEMS = 100;
@@ -223,7 +223,7 @@ function notifyBrowser(title: string, body: string) {
   }
 }
 
-export function processWatchNotificationFrame(frame: HostWatchFrame, config: HermesConfig): void {
+export function processWatchNotificationFrame(frame: WatchFrame, config: HermesConfig): void {
   const sig = `${frame.event}:${String(frame.payload["session_id"] ?? frame.payload["job_id"] ?? "")}:${String(frame.payload["command"] ?? frame.payload["title"] ?? frame.payload["name"] ?? "")}`;
   const now = Date.now();
   const prev = recentWatchEventKeys.get(sig);

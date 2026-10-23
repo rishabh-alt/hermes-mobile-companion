@@ -1396,9 +1396,14 @@ function NtfyPushSettingsCard({
                     setSyncingHost(true);
                     setPushNote(null);
                     try {
-                      const res = await syncNtfyWebhookToHost(dashboardUrl, config);
-                      setPushNote(res.detail);
-                      haptic(res.synced ? "done" : "error");
+                      const syncedUrl = await syncNtfyWebhookToHost({
+                        dashboardBaseUrl: dashboardUrl,
+                        serverUrl: config.ntfyServerUrl,
+                        topic: config.ntfyTopic ?? "",
+                        enabled: Boolean(config.ntfyEnabled),
+                      });
+                      setPushNote(`Synced webhook (${syncedUrl}) to host config.`);
+                      haptic("done");
                     } catch (err) {
                       haptic("error");
                       setPushNote(
