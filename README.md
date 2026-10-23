@@ -1,29 +1,62 @@
-# Hermes Mobile
+# Hermes Companion
 
-An Android companion for [Hermes Agent](https://hermes-agent.nousresearch.com/).
-Hermes runs on your Mac; this app provides a polished phone interface that
-connects directly to your gateway.
-
-This project is intentionally transparent about its origin: it was initially
-vibe-coded with help from Hermes Agent and is now being cleaned up as a normal,
-community-contributable open-source project. The maintainer is not a
-professional programmer, so clear explanations and patient pull requests are
-welcome.
-
-## Architecture
+A native Android companion for [Hermes Agent](https://hermes-agent.nousresearch.com/).
+Hermes runs on your computer; this app is a full phone interface for it — not a
+read-only viewer. Chat, sessions, settings, cron jobs, and notifications, built
+to match the Hermes desktop dashboard as closely as a phone sensibly can.
 
 ```text
-Android phone → Tailscale → Hermes gateway on your Mac
+Android phone → Tailscale or LAN → Hermes gateway on your machine
 ```
 
 The repository contains the client only. It does not contain Hermes, a gateway,
 API keys, access tokens, or a hosted proxy.
 
-## Current status
+This project is intentionally transparent about its origin: it was initially
+vibe-coded with help from Hermes Agent and is developed with AI coding agents
+under the maintainer's direction. The maintainer is not a professional
+programmer, so clear explanations and patient pull requests are welcome.
 
-The app can connect to a local Hermes gateway, browse sessions, send chat
-messages, stream responses, select models, and attach images/files. It is still
-in active development and should be treated as an experimental client.
+## Download
+
+**[Hermes Companion v1.0 (APK)](https://github.com/rishabh-alt/hermes-mobile-companion/releases/tag/v1.0)**
+
+- Debug-signed APK for sideloading — Android will ask you to allow installs
+  from your browser once. This is not a Play Store build.
+- Requires Android 7.0 (API 24) or newer.
+- Works with Hermes Agent hosts **0.20.0 – 0.22.x**; the app checks your host's
+  version and configuration schema and tells you plainly if an update or
+  migration is needed.
+
+## What it does
+
+- **Chat** — streaming responses, model picker, camera and file attachments,
+  message timestamps with day dividers, and a session drawer that shows which
+  sessions are waiting on you or need an approval.
+- **Settings parity** — the dashboard's configuration is editable from the
+  phone: every config category is covered, with secret values kept hidden by
+  design. Includes config backup and restore, and an app PIN lock.
+- **Jobs** — view cron jobs and read a run inbox of results, synced from your
+  host.
+- **Activity & notifications** — an activity feed of what your agent is doing,
+  with optional ntfy push notifications so a waiting approval can reach you
+  with the app closed.
+- **Host status** — gateway health, version compatibility, and connection
+  details at a glance.
+- **Connections** — Tailscale or LAN, HTTPS only, with automatic route
+  probing that picks the fastest reachable address for your host.
+
+## Connecting to Hermes
+
+Expose your Hermes dashboard/gateway over HTTPS (for example with Tailscale
+Serve), then enter its URL in the app's Settings and sign in. Plain HTTP URLs
+are rejected so your credentials are never transmitted without encryption.
+On Android, tokens are encrypted with a non-exportable Android Keystore key;
+they are never written to WebView `localStorage`, and app-data backups are
+disabled.
+
+Do not copy the maintainer's hostname, token, `.env` file, or screenshots with
+private connection details into an issue or pull request.
 
 ## Development
 
@@ -47,21 +80,12 @@ npx cap sync android
 (cd android && ./gradlew assembleDebug --no-daemon)
 ```
 
-The complete interface is bundled into the APK. The Mac only needs to run the
-Hermes gateway; no frontend development server is required after installation.
-The APK is written to `android/app/build/outputs/apk/debug/`.
+The complete interface is bundled into the APK; no frontend development server
+is required after installation. The APK is written to
+`android/app/build/outputs/apk/debug/`.
 
-## Connecting to Hermes
-
-Install Tailscale on both the Mac running Hermes and the Android phone. Expose
-the local gateway with Tailscale Serve, then enter its HTTPS URL and gateway
-access token in the app's Settings. Plain HTTP gateway URLs are rejected so the
-token is never transmitted without encryption. On Android, the token is encrypted
-with a non-exportable Android Keystore key; it is never written to WebView
-`localStorage`, and app-data backups are disabled.
-
-Do not copy the maintainer's hostname, token, `.env` file, or screenshots with
-private connection details into an issue or pull request.
+Pushes to `main` run CI (lint, tests, typecheck, web build, Android build) and
+republish the v1.0 release APK automatically.
 
 ## Contributing
 
@@ -76,4 +100,4 @@ it immediately rather than merely deleting the file from the latest commit.
 
 ## License
 
-MIT 
+MIT
