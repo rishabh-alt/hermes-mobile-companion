@@ -1,0 +1,13 @@
+{
+	"appId": "app.hermes.companion",
+	"appName": "Hermes",
+	"webDir": "dist",
+	"android": {
+		"backgroundColor": "#141414"
+	},
+	"plugins": {
+		"CapacitorHttp": {
+			"enabled": false
+		}
+	}
+}

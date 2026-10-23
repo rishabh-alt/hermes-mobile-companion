@@ -1,0 +1,1 @@
+var e=[];function t(e){return e.replace(/bearer\s+\S+/gi,`bearer [redacted]`).replace(/\b[A-Za-z0-9_-]{32,}\b/g,`[redacted]`)}function n(n){e.push(`${new Date().toISOString()} ${t(n)}`),e.length>80&&e.shift()}function r(){return[...e]}function i(){e.length=0}export{r as n,n as r,i as t};

@@ -5,9 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   web:
@@ -44,3 +45,22 @@ jobs:
       - run: npx cap sync android
       - run: chmod +x ./gradlew && ./gradlew assembleDebug --no-daemon
         working-directory: android
+      - name: Prepare release APK asset
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk hermes-companion-v1.0.apk
+      - name: Upload APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-companion-v1.0.apk
+          path: hermes-companion-v1.0.apk
+      - name: Publish GitHub Release v1.0
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES="First public build; debug-signed APK for sideloading (not a Play Store build); works with Hermes Agent hosts 0.20.0–0.22.x; after installing, connect your host in Settings (Tailscale or LAN HTTPS)."
+          if gh release view v1.0 >/dev/null 2>&1; then
+            gh release upload v1.0 hermes-companion-v1.0.apk --clobber
+            gh release edit v1.0 --title "Hermes Companion v1.0" --notes "$NOTES"
+          else
+            gh release create v1.0 hermes-companion-v1.0.apk --target "${{ github.sha }}" --title "Hermes Companion v1.0" --notes "$NOTES"
+          fi
