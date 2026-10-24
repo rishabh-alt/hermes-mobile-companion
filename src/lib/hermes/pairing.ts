@@ -15,7 +15,7 @@ import {
 } from "./secure-storage";
 import type { GatewayTokenScope, HermesConfig, SavedHost } from "./types";
 
-export type PairingRedeemMode = "provider" | "plugin-public" | "listener";
+export type PairingRedeemMode = "gateway" | "provider" | "plugin-public" | "listener";
 
 export type PairingErrorCode =
   | "pairing_expired"
@@ -106,7 +106,7 @@ export interface CompanionPairingOutcome {
   nextConfig: HermesConfig;
 }
 
-const SUPPORTED_MODES = new Set<string>(["provider", "plugin-public", "listener"]);
+const SUPPORTED_MODES = new Set<string>(["gateway", "provider", "plugin-public", "listener"]);
 
 function normalizeRouteUrl(raw: unknown): string {
   if (typeof raw !== "string" || !raw.trim()) {
@@ -211,7 +211,12 @@ export function parseCompanionPairingPayload(
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new PairingFlowError("malformed_payload");
   }
-  const portRaw = redeemObj["port"];
+  const portRaw =
+    redeemObj["port"] ??
+    redeemObj["api_server_port"] ??
+    redeemObj["gateway_port"] ??
+    redeemObj["apiServerPort"] ??
+    redeemObj["gatewayPort"];
   const port =
     typeof portRaw === "number" && Number.isInteger(portRaw) && portRaw > 0 && portRaw <= 65535
       ? portRaw
@@ -266,14 +271,38 @@ export function parseCompanionPairingPayload(
   };
 }
 
+function replaceUrlPort(rawUrl: string, port: number): string {
+  const parsed = new URL(rawUrl);
+  parsed.port = String(port);
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function resolveRedeemBaseUrl(
+  route: CompanionPairingRouteEntry,
+  redeem: CompanionPairingRedeemSpec,
+): string {
+  if (redeem.mode === "gateway") {
+    if (route.gatewayUrl) {
+      return route.gatewayUrl.replace(/\/+$/, "");
+    }
+    if (redeem.port) {
+      return replaceUrlPort(route.url, redeem.port);
+    }
+    return route.url.replace(/\/+$/, "");
+  }
+  if (redeem.mode === "listener" && redeem.port) {
+    return replaceUrlPort(route.url, redeem.port);
+  }
+  return route.url.replace(/\/+$/, "");
+}
+
 export async function probeSinglePairingRoute(
   route: CompanionPairingRouteEntry,
   redeem: CompanionPairingRedeemSpec,
   timeoutMs = 1500,
 ): Promise<{ ok: boolean; latencyMs: number }> {
   const start = Date.now();
-  const targetUrl =
-    redeem.mode === "listener" && redeem.port ? replaceUrlPort(route.url, redeem.port) : route.url;
+  const targetUrl = resolveRedeemBaseUrl(route, redeem);
   try {
     const response = await CapacitorHttp.request({
       url: targetUrl,
@@ -294,12 +323,6 @@ export async function probeSinglePairingRoute(
       latencyMs: Math.max(1, Date.now() - start),
     };
   }
-}
-
-function replaceUrlPort(rawUrl: string, port: number): string {
-  const parsed = new URL(rawUrl);
-  parsed.port = String(port);
-  return parsed.toString().replace(/\/+$/, "");
 }
 
 export async function probePairingRoutes(
@@ -372,10 +395,7 @@ export function buildRedeemUrl(
   route: CompanionPairingRouteEntry,
   redeem: CompanionPairingRedeemSpec,
 ): string {
-  const base =
-    redeem.mode === "listener" && redeem.port
-      ? replaceUrlPort(route.url, redeem.port)
-      : route.url.replace(/\/+$/, "");
+  const base = resolveRedeemBaseUrl(route, redeem);
   return `${base}${redeem.path}`;
 }
 
@@ -544,15 +564,21 @@ function deriveGatewayAndDashboardUrls(
   route: CompanionPairingRouteEntry,
   redeemResult?: CompanionPairingRedeemResult,
   isLan = false,
+  redeemSpec?: CompanionPairingRedeemSpec,
 ): { gatewayUrl: string; dashboardUrl: string } {
+  const rawUrl = route.url.replace(/\/+$/, "");
+  const fallbackGatewayFromSpec =
+    redeemSpec?.mode === "gateway" && redeemSpec.port
+      ? replaceUrlPort(rawUrl, redeemSpec.port)
+      : undefined;
+
   const explicitGateway = isLan
-    ? redeemResult?.lanGatewayUrl || route.gatewayUrl
-    : redeemResult?.gatewayUrl || route.gatewayUrl;
+    ? redeemResult?.lanGatewayUrl || route.gatewayUrl || fallbackGatewayFromSpec
+    : redeemResult?.gatewayUrl || route.gatewayUrl || fallbackGatewayFromSpec;
   const explicitDashboard = isLan
     ? redeemResult?.lanDashboardUrl || route.dashboardUrl
     : redeemResult?.dashboardUrl || route.dashboardUrl;
 
-  const rawUrl = route.url.replace(/\/+$/, "");
   let gatewayUrl = explicitGateway ?? "";
   let dashboardUrl = explicitDashboard ?? "";
 
@@ -576,10 +602,14 @@ function deriveGatewayAndDashboardUrls(
       }
     }
   } else if (gatewayUrl && !dashboardUrl) {
-    try {
-      dashboardUrl = dashboardUrlFromGateway(gatewayUrl);
-    } catch {
+    if (rawUrl !== gatewayUrl) {
       dashboardUrl = rawUrl;
+    } else {
+      try {
+        dashboardUrl = dashboardUrlFromGateway(gatewayUrl);
+      } catch {
+        dashboardUrl = rawUrl;
+      }
     }
   } else if (!gatewayUrl && dashboardUrl) {
     gatewayUrl = dashboardUrl.endsWith("/dashboard")
@@ -606,9 +636,9 @@ export async function completeCompanionPairing(input: {
   const redeemed = await redeemPairingOffer(payload, probed.winningRoute, input.deviceName);
 
   const primaryRoute = probed.tailscaleRoute ?? probed.winningRoute;
-  const primaryUrls = deriveGatewayAndDashboardUrls(primaryRoute, redeemed, false);
+  const primaryUrls = deriveGatewayAndDashboardUrls(primaryRoute, redeemed, false, payload.redeem);
   const lanUrls = probed.lanRoute
-    ? deriveGatewayAndDashboardUrls(probed.lanRoute, redeemed, true)
+    ? deriveGatewayAndDashboardUrls(probed.lanRoute, redeemed, true, payload.redeem)
     : null;
 
   const effectiveToken = redeemed.gatewayToken ?? redeemed.deviceCredential ?? input.config.token;
