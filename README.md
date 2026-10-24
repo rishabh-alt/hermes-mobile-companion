@@ -49,11 +49,28 @@ programmer, so clear explanations and patient pull requests are welcome.
 ## Connecting to Hermes
 
 Expose your Hermes dashboard/gateway over HTTPS (for example with Tailscale
-Serve), then enter its URL in the app's Settings and sign in. Plain HTTP URLs
-are rejected so your credentials are never transmitted without encryption.
-On Android, tokens are encrypted with a non-exportable Android Keystore key;
-they are never written to WebView `localStorage`, and app-data backups are
-disabled.
+Serve or LAN TLS), then connect in Settings:
+
+- **Pair with QR code (recommended)** — if your host has the
+  `hermes-companion-pair` plugin enabled, open the dashboard's **Pair phone**
+  page and scan the one-time QR code (or paste the `hermes-pair://v1?...` URI).
+  The app probes all advertised routes (`Tailscale` + `LAN`) in parallel,
+  redeems the one-time token for a per-device credential and dashboard session,
+  and configures chat + dashboard in one step.
+- **Enter details manually** — enter your HTTPS gateway/dashboard URL, bearer
+  token, and dashboard password in Settings.
+
+Plain HTTP URLs are rejected so your credentials are never transmitted without
+encryption. On Android, tokens and device credentials are encrypted with a
+non-exportable Android Keystore key; they are never written to WebView
+`localStorage`, and app-data backups are disabled.
+
+> **Note on device revocation (v1):** Revoking a paired phone from the
+> dashboard's paired-devices list immediately invalidates its dashboard session
+> and refresh token. When connected to a Hermes `0.20.0–0.22.x` `api_server`
+> that uses a single global `API_SERVER_KEY` (`gatewayTokenScope: "shared"`),
+> also rotate `API_SERVER_KEY` on the host if you want to revoke direct
+> `/v1/chat/completions` gateway access.
 
 Do not copy the maintainer's hostname, token, `.env` file, or screenshots with
 private connection details into an issue or pull request.

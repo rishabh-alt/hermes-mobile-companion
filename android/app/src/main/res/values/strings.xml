@@ -4,4 +4,5 @@
     <string name="title_activity_main">Hermes</string>
     <string name="package_name">app.hermes.companion</string>
     <string name="custom_url_scheme">app.hermes.companion</string>
+    <string name="camera_permission_rationale">Scan a pairing code from your Hermes dashboard</string>
 </resources>

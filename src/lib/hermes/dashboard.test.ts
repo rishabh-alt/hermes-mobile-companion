@@ -1,8 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@capacitor/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@capacitor/core")>();
+  return {
+    ...actual,
+    CapacitorHttp: {
+      request: vi.fn(),
+    },
+  };
+});
+
+import { CapacitorHttp } from "@capacitor/core";
 import {
+  captureResponseCookies,
   cookieHeader,
+  dashboardJson,
   dashboardUrlFromGateway,
   mainModelFromConfig,
+  mergeCookieStrings,
   normalizeDashboardUrl,
   parseArchivedSessionsPayload,
   parseDashboardEnvPayload,
@@ -15,6 +30,7 @@ import {
   sanitizePairingUrl,
 } from "./dashboard";
 import { encodeGatewayAddressQr } from "./qr";
+import { getDashboardCookie, setDashboardCookie } from "./secure-storage";
 
 describe("dashboard address", () => {
   it("keeps the /dashboard prefix and drops one trailing slash", () => {
@@ -36,9 +52,53 @@ describe("dashboard address", () => {
     });
   });
 
-  it("keeps only the cookie pair from a set-cookie header", () => {
+  it("keeps only the cookie pair from a set-cookie header and handles Expires commas and arrays", async () => {
     expect(cookieHeader("session=abc; Path=/; HttpOnly, theme=dark; Path=/")).toBe(
       "session=abc; theme=dark",
+    );
+    expect(
+      cookieHeader([
+        "hermes_session_at=at_tok_1; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT; HttpOnly; SameSite=Lax",
+        "hermes_session_rt=rt_tok_1; Path=/; HttpOnly; SameSite=Lax",
+      ]),
+    ).toBe("hermes_session_at=at_tok_1; hermes_session_rt=rt_tok_1");
+    expect(
+      mergeCookieStrings(
+        "hermes_session_at=old_at; hermes_session_rt=rt_tok_1",
+        "hermes_session_at=new_at",
+      ),
+    ).toBe("hermes_session_at=new_at; hermes_session_rt=rt_tok_1");
+
+    await setDashboardCookie("");
+    await captureResponseCookies({
+      "Set-Cookie": [
+        "hermes_session_at=at_live_99; Path=/; HttpOnly",
+        "hermes_session_rt=rt_live_99; Path=/; HttpOnly",
+      ],
+    });
+    expect(await getDashboardCookie()).toBe(
+      "hermes_session_at=at_live_99; hermes_session_rt=rt_live_99",
+    );
+
+    const reqMock = vi.mocked(CapacitorHttp.request);
+    reqMock.mockResolvedValueOnce({
+      status: 200,
+      headers: {
+        "set-cookie": "hermes_session_at=at_rotated_100; Path=/; HttpOnly",
+      },
+      data: JSON.stringify({ ok: true }),
+      url: "https://mac.example.ts.net/dashboard/api/status",
+    });
+    await dashboardJson("https://mac.example.ts.net/dashboard", "/api/status", "GET");
+    expect(reqMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: "hermes_session_at=at_live_99; hermes_session_rt=rt_live_99",
+        }),
+      }),
+    );
+    expect(await getDashboardCookie()).toBe(
+      "hermes_session_at=at_rotated_100; hermes_session_rt=rt_live_99",
     );
   });
 

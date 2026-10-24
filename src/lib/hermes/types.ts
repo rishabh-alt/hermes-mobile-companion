@@ -60,6 +60,8 @@ export interface NotificationPrefs {
   completionChime?: boolean | undefined;
 }
 
+export type GatewayTokenScope = "device" | "shared";
+
 export interface SavedHost {
   id: string;
   label: string;
@@ -73,6 +75,8 @@ export interface SavedHost {
   provider?: string | undefined;
   model?: string | undefined;
   dashboardUsername?: string | undefined;
+  deviceId?: string | undefined;
+  gatewayTokenScope?: GatewayTokenScope | undefined;
 }
 
 export interface HermesConfig {
@@ -89,6 +93,8 @@ export interface HermesConfig {
   fallbackModel: string;
   dashboardBaseUrl: string;
   dashboardUsername: string;
+  deviceId?: string | undefined;
+  gatewayTokenScope?: GatewayTokenScope | undefined;
   wsEnabled: boolean;
   haptics: boolean;
   reasoning: ReasoningLevel;

@@ -50,6 +50,25 @@ export async function setDashboardCookie(value: string) {
 }
 
 const memoryHostTokens = new Map<string, string>();
+const memoryNamedSecrets = new Map<string, string>();
+
+export async function getDeviceCredential() {
+  return readNamedSecret("device_credential");
+}
+
+export async function setDeviceCredential(value: string) {
+  await writeNamedSecret("device_credential", value);
+}
+
+export async function getHostDeviceCredential(hostId: string) {
+  const key = `device_credential_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  return readNamedSecret(key);
+}
+
+export async function setHostDeviceCredential(hostId: string, value: string) {
+  const key = `device_credential_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  await writeNamedSecret(key, value);
+}
 
 export async function getHostToken(hostId: string) {
   const key = `host_token_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -59,17 +78,26 @@ export async function getHostToken(hostId: string) {
 
 export async function setHostToken(hostId: string, value: string) {
   const key = `host_token_${hostId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-  memoryHostTokens.set(key, value);
+  if (value) {
+    memoryHostTokens.set(key, value);
+  } else {
+    memoryHostTokens.delete(key);
+  }
   await writeNamedSecret(key, value);
 }
 
 async function readNamedSecret(name: string) {
-  if (!Capacitor.isNativePlatform()) return "";
+  if (!Capacitor.isNativePlatform()) return memoryNamedSecrets.get(name) ?? "";
   const result = await nativeStorage.getSecret({ name });
   return result.value;
 }
 
 async function writeNamedSecret(name: string, value: string) {
+  if (value) {
+    memoryNamedSecrets.set(name, value);
+  } else {
+    memoryNamedSecrets.delete(name);
+  }
   if (!Capacitor.isNativePlatform()) return;
   await nativeStorage.setSecret({ name, value });
 }

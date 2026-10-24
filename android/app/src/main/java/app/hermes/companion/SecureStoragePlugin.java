@@ -72,10 +72,13 @@ public class SecureStoragePlugin extends Plugin {
         read(call, ADMIN_KEY);
     }
 
+    private static final String DEVICE_CREDENTIAL = "device_credential";
+
     private boolean isAllowedSecret(String name) {
         return DASHBOARD_PASSWORD.equals(name)
                 || DASHBOARD_COOKIE.equals(name)
-                || (name != null && name.startsWith("host_token_"));
+                || DEVICE_CREDENTIAL.equals(name)
+                || (name != null && (name.startsWith("host_token_") || name.startsWith("device_credential_")));
     }
 
     @PluginMethod

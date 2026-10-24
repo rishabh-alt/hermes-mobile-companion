@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import jsQR from "jsqr";
 import { QrCode } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/hermes/app-shell";
@@ -69,8 +70,16 @@ import {
   type VaultCredentialRow,
 } from "@/lib/hermes/dashboard";
 import { encodeGatewayAddressQr } from "@/lib/hermes/qr";
+import { completeCompanionPairing, isCompanionPairingPayloadCandidate } from "@/lib/hermes/pairing";
 import { nativeGet } from "@/lib/hermes/native-get";
-import { getDashboardCookie, getHostToken, setHostToken } from "@/lib/hermes/secure-storage";
+import {
+  getDashboardCookie,
+  getHostDeviceCredential,
+  getHostToken,
+  setDeviceCredential,
+  setHostDeviceCredential,
+  setHostToken,
+} from "@/lib/hermes/secure-storage";
 import { composeGatewayUrl } from "@/lib/hermes/profiles";
 import {
   DIAGNOSTIC_PROBES,
@@ -422,6 +431,8 @@ function SavedHostsCard({
       provider: config.provider,
       model: config.model,
       dashboardUsername: config.dashboardUsername,
+      ...(config.deviceId ? { deviceId: config.deviceId } : {}),
+      ...(config.gatewayTokenScope ? { gatewayTokenScope: config.gatewayTokenScope } : {}),
     };
     if (config.token.trim()) {
       await setHostToken(id, config.token.trim());
@@ -436,6 +447,10 @@ function SavedHostsCard({
 
   const switchToHost = async (host: SavedHost) => {
     const storedToken = await getHostToken(host.id);
+    const storedDeviceCred = await getHostDeviceCredential(host.id);
+    if (storedDeviceCred) {
+      await setDeviceCredential(storedDeviceCred);
+    }
     update({
       baseUrl: host.baseUrl,
       dashboardBaseUrl: host.dashboardBaseUrl,
@@ -449,6 +464,10 @@ function SavedHostsCard({
       ...(host.dashboardUsername !== undefined
         ? { dashboardUsername: host.dashboardUsername }
         : {}),
+      ...(host.deviceId !== undefined ? { deviceId: host.deviceId } : {}),
+      ...(host.gatewayTokenScope !== undefined
+        ? { gatewayTokenScope: host.gatewayTokenScope }
+        : {}),
       ...(storedToken ? { token: storedToken } : {}),
     });
     setNoteText(`Switched to ${host.label}.`);
@@ -457,6 +476,7 @@ function SavedHostsCard({
   const removeHost = (hostId: string) => {
     update({ savedHosts: savedHosts.filter((h) => h.id !== hostId) });
     void setHostToken(hostId, "");
+    void setHostDeviceCredential(hostId, "");
   };
 
   return (
@@ -595,9 +615,14 @@ function ConnectionFields({
   onClearProbes: () => void;
   onSignedIn: (signedIn: boolean) => void;
 }) {
+  const navigate = useNavigate();
   const [qrOpen, setQrOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(() => Boolean(config.baseUrl.trim()));
   const [shareQrOpen, setShareQrOpen] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [deviceNameDraft, setDeviceNameDraft] = useState("Hermes Companion (Android)");
   const [qrInput, setQrInput] = useState("");
   const [qrNote, setQrNote] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -605,6 +630,7 @@ function ConnectionFields({
   const qrFileRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -616,9 +642,76 @@ function ConnectionFields({
     return () => stopCamera();
   }, []);
 
+  const decodeVideoFrameWithJsQr = (video: HTMLVideoElement): string | null => {
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return null;
+    if (!canvasRef.current && typeof document !== "undefined") {
+      canvasRef.current = document.createElement("canvas");
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const code = jsQR(imageData.data, width, height, { inversionAttempts: "dontInvert" });
+    return code?.data?.trim() || null;
+  };
+
+  const decodeBitmapWithJsQr = (bitmap: ImageBitmap): string | null => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0);
+    const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    const code = jsQR(imageData.data, bitmap.width, bitmap.height, {
+      inversionAttempts: "attemptBoth",
+    });
+    return code?.data?.trim() || null;
+  };
+
   const applyScannedAddress = async (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setQrNote("Scan a QR code or paste a pairing code first.");
+      return;
+    }
+    setPairingBusy(true);
+    setQrNote(null);
     try {
-      const parsed = parsePairingInput(raw, config.baseUrl);
+      if (isCompanionPairingPayloadCandidate(trimmed)) {
+        stopCamera();
+        const outcome = await completeCompanionPairing({
+          rawPayload: trimmed,
+          config,
+          update,
+          deviceName: deviceNameDraft,
+          onStep: (step) => setQrNote(step),
+        });
+        onSignedIn(true);
+        setQrInput("");
+        setQrOpen(false);
+        setPasteOpen(false);
+        haptic("done");
+        if (outcome.destination === "chat") {
+          setQrNote(`Paired with ${outcome.hostName}. Opening chat…`);
+          await navigate({ to: "/" });
+        } else {
+          setQrNote(
+            `Paired with ${outcome.hostName}. ${outcome.compatibility.headline} — opening Server status.`,
+          );
+          await navigate({ to: "/status" });
+        }
+        return;
+      }
+
+      const parsed = parsePairingInput(trimmed, config.baseUrl);
       let derivedDashboard = config.dashboardBaseUrl;
       try {
         derivedDashboard = dashboardUrlFromGateway(parsed.baseUrl);
@@ -640,15 +733,19 @@ function ConnectionFields({
         );
       } else {
         update({ baseUrl: parsed.baseUrl, dashboardBaseUrl: derivedDashboard });
+        setManualOpen(true);
         setQrNote("Server address saved. Enter your access token below.");
       }
       stopCamera();
       setQrInput("");
       setQrOpen(false);
+      setPasteOpen(false);
       haptic("done");
     } catch (err) {
       haptic("error");
       setQrNote(err instanceof Error ? err.message : "Could not read that QR code.");
+    } finally {
+      setPairingBusy(false);
     }
   };
 
@@ -663,7 +760,7 @@ function ConnectionFields({
   const startCamera = async () => {
     setQrNote(null);
     if (!navigator.mediaDevices?.getUserMedia) {
-      setQrNote("Camera isn't available in this browser. Choose a QR photo or paste the link.");
+      setQrNote("Camera isn't available in this browser. Choose a QR photo or paste the code.");
       return;
     }
     try {
@@ -683,222 +780,327 @@ function ConnectionFields({
           };
         }
       ).BarcodeDetector;
-      if (!Detector) {
-        setQrNote("Use Scan QR photo below if your browser doesn't auto-detect from live video.");
-        return;
-      }
-      const detector = new Detector({ formats: ["qr_code"] });
+      const detector = Detector ? new Detector({ formats: ["qr_code"] }) : null;
+
       const poll = async () => {
         if (!streamRef.current) return;
-        if (videoRef.current && videoRef.current.readyState >= 2) {
+        const video = videoRef.current;
+        if (video && video.readyState >= 2) {
           try {
-            const found = await detector.detect(videoRef.current);
-            const first = found[0]?.rawValue;
-            if (first) {
-              await applyScannedAddress(first);
+            let detectedValue: string | null = null;
+            if (detector) {
+              const found = await detector.detect(video).catch(() => []);
+              detectedValue = found[0]?.rawValue?.trim() || null;
+            }
+            if (!detectedValue) {
+              detectedValue = decodeVideoFrameWithJsQr(video);
+            }
+            if (detectedValue) {
+              await applyScannedAddress(detectedValue);
               return;
             }
           } catch {
             // Continue scanning frames while camera is open.
           }
         }
-        if (streamRef.current) window.setTimeout(() => void poll(), 350);
+        if (streamRef.current) window.setTimeout(() => void poll(), 260);
       };
       void poll();
     } catch {
       stopCamera();
-      setQrNote("Camera permission was blocked. Use Scan QR photo or paste your link below.");
+      setQrNote(
+        "Camera permission was blocked. Allow camera access to scan a pairing code from your Hermes dashboard, or paste the code below.",
+      );
     }
   };
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <Label htmlFor="baseUrl">Server address</Label>
-          <div className="flex items-center gap-1">
-            {config.baseUrl.trim().startsWith("https://") && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setShareQrOpen((prev) => !prev)}
-              >
-                Share QR
-              </Button>
-            )}
+      {/* Primary Connect Flow: Scan QR Code */}
+      <div className="space-y-2.5 rounded-xl border border-border/70 bg-secondary/20 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-foreground">Pair with QR code</p>
+            <p className="text-xs text-muted-foreground">
+              Scan a pairing code from your Hermes dashboard (Companion tab or{" "}
+              <span className="font-mono">hermes companion pair</span>).
+            </p>
+          </div>
+          {config.baseUrl.trim().startsWith("https://") && (
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              onClick={() => {
-                if (qrOpen) {
-                  stopCamera();
-                  setQrOpen(false);
-                } else {
-                  setQrOpen(true);
-                  void startCamera();
-                }
-                setQrNote(null);
-              }}
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={() => setShareQrOpen((prev) => !prev)}
             >
-              <QrCode className="mr-1.5 h-3.5 w-3.5" />
-              {qrOpen ? "Close scanner" : "Scan QR"}
+              Share QR
             </Button>
-          </div>
+          )}
         </div>
-        <Input
-          id="baseUrl"
-          inputMode="url"
-          autoCapitalize="none"
-          placeholder="https://your-mac.example.ts.net"
-          value={config.baseUrl}
-          onChange={(event) => {
-            onClearProbes();
-            update({ baseUrl: event.target.value });
-          }}
-        />
-        <p className="text-xs text-muted-foreground">
-          Your Hermes HTTPS link (such as your Tailscale address).
-        </p>
-      </div>
-      {shareQrOpen && config.baseUrl.trim() && <AddressQrCard baseUrl={config.baseUrl} />}
-      {qrOpen && (
-        <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
-          <p className="text-xs font-medium">Scan server QR code</p>
-          <p className="text-xs text-muted-foreground">
-            Point your camera at your server's QR code, or paste a pairing code below.
-          </p>
-          {cameraActive && (
-            <div className="space-y-2">
-              <video
-                ref={attachVideoElement}
-                muted
-                playsInline
-                autoPlay
-                className="h-44 w-full rounded-lg bg-black object-cover"
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            className="min-h-[44px] flex-1"
+            disabled={pairingBusy}
+            onClick={() => {
+              if (qrOpen) {
+                stopCamera();
+                setQrOpen(false);
+              } else {
+                setQrOpen(true);
+                setPasteOpen(false);
+                void startCamera();
+              }
+              setQrNote(null);
+            }}
+          >
+            <QrCode className="mr-1.5 h-4 w-4" />
+            {qrOpen ? "Close scanner" : "Scan QR code"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-[44px]"
+            disabled={pairingBusy}
+            onClick={() => {
+              stopCamera();
+              setQrOpen(false);
+              setPasteOpen((prev) => !prev);
+              setQrNote(null);
+            }}
+          >
+            Paste pairing code instead
+          </Button>
+        </div>
+
+        {qrOpen && (
+          <div className="space-y-2.5 rounded-lg border border-border/70 bg-background/80 p-3">
+            <div className="space-y-1">
+              <Label htmlFor="deviceNameDraft" className="text-xs">
+                Device name on host
+              </Label>
+              <Input
+                id="deviceNameDraft"
+                value={deviceNameDraft}
+                onChange={(e) => setDeviceNameDraft(e.target.value)}
+                placeholder="e.g. Rishab's S24 Ultra"
+                className="h-8 text-xs"
               />
-              <Button type="button" size="sm" variant="outline" onClick={stopCamera}>
-                Stop camera
+            </div>
+            {cameraActive && (
+              <div className="space-y-2">
+                <video
+                  ref={attachVideoElement}
+                  muted
+                  playsInline
+                  autoPlay
+                  className="h-48 w-full rounded-lg bg-black object-cover"
+                />
+                <Button type="button" size="sm" variant="outline" onClick={stopCamera}>
+                  Stop camera
+                </Button>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {!cameraActive && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void startCamera()}
+                >
+                  Open camera
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => qrFileRef.current?.click()}
+              >
+                Scan QR photo
               </Button>
             </div>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {!cameraActive && (
-              <Button type="button" size="sm" variant="outline" onClick={() => void startCamera()}>
-                Open camera
+            <input
+              ref={qrFileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                try {
+                  const bitmap = await createImageBitmap(file);
+                  let decoded = decodeBitmapWithJsQr(bitmap);
+                  if (!decoded) {
+                    const Detector = (
+                      globalThis as unknown as {
+                        BarcodeDetector?: new (opts: { formats: string[] }) => {
+                          detect: (source: ImageBitmap) => Promise<Array<{ rawValue?: string }>>;
+                        };
+                      }
+                    ).BarcodeDetector;
+                    if (Detector) {
+                      const detector = new Detector({ formats: ["qr_code"] });
+                      const codes = await detector.detect(bitmap);
+                      decoded = codes[0]?.rawValue?.trim() || null;
+                    }
+                  }
+                  if (!decoded) {
+                    setQrNote("No QR code found in that image. Try Paste pairing code instead.");
+                    return;
+                  }
+                  await applyScannedAddress(decoded);
+                } catch {
+                  setQrNote("Could not read that QR image. Use Paste pairing code instead.");
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {pasteOpen && (
+          <div className="space-y-2 rounded-lg border border-border/70 bg-background/80 p-3">
+            <Label htmlFor="pastePairingPayload" className="text-xs">
+              Paste pairing payload JSON or link
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="pastePairingPayload"
+                value={qrInput}
+                autoCapitalize="none"
+                placeholder='{"v":1,"type":"hermes-companion-pair",...}'
+                onChange={(event) => setQrInput(event.target.value)}
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                disabled={pairingBusy || !qrInput.trim()}
+                onClick={() => void applyScannedAddress(qrInput)}
+              >
+                {pairingBusy ? "Pairing…" : "Pair"}
               </Button>
+            </div>
+          </div>
+        )}
+
+        {qrNote && <p className="text-xs text-muted-foreground">{qrNote}</p>}
+
+        {config.deviceId && (
+          <div className="space-y-1 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+            <p>
+              Paired device ID: <span className="font-mono text-foreground">{config.deviceId}</span>
+              {" · "}
+              Gateway auth:{" "}
+              <span className="font-mono text-foreground">
+                {config.gatewayTokenScope === "device"
+                  ? "per-device credential"
+                  : "shared host key"}
+              </span>
+            </p>
+            {config.gatewayTokenScope !== "device" && (
+              <p>
+                Revoking this device in the dashboard immediately blocks Dashboard access and future
+                logins; rotating GATEWAY_API_KEY on the host is required to invalidate shared
+                Gateway chat tokens on single-key servers.
+              </p>
             )}
+          </div>
+        )}
+      </div>
+
+      {shareQrOpen && config.baseUrl.trim() && <AddressQrCard baseUrl={config.baseUrl} />}
+
+      <div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full justify-between px-2 text-xs text-muted-foreground"
+          onClick={() => setManualOpen((v) => !v)}
+        >
+          <span>Enter details manually</span>
+          <span>{manualOpen ? "Hide" : "Show"}</span>
+        </Button>
+      </div>
+
+      {manualOpen && (
+        <div className="space-y-3 rounded-xl border border-border/70 p-3">
+          <div className="space-y-2">
+            <Label htmlFor="baseUrl">Server address</Label>
+            <Input
+              id="baseUrl"
+              inputMode="url"
+              autoCapitalize="none"
+              placeholder="https://your-mac.example.ts.net"
+              value={config.baseUrl}
+              onChange={(event) => {
+                onClearProbes();
+                update({ baseUrl: event.target.value });
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Your Hermes HTTPS link (such as your Tailscale address).
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="token">Access token</Label>
+            <Input
+              id="token"
+              type="password"
+              autoCapitalize="none"
+              placeholder="Paste your server token (if required)"
+              value={config.token}
+              onChange={(event) => update({ token: event.target.value })}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => qrFileRef.current?.click()}
+              onClick={onCheck}
+              disabled={checking || !config.baseUrl.trim()}
+              className="flex-1"
             >
-              Scan QR photo
+              {checking ? "Testing connection…" : "Test connection"}
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/status">Server status</Link>
             </Button>
           </div>
-          <div className="flex gap-2">
-            <Input
-              value={qrInput}
-              autoCapitalize="none"
-              placeholder="Paste link or one-time pairing code"
-              onChange={(event) => setQrInput(event.target.value)}
-            />
-            <Button type="button" size="sm" onClick={() => void applyScannedAddress(qrInput)}>
-              Apply
-            </Button>
-          </div>
-          <input
-            ref={qrFileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (!file) return;
-              const Detector = (
-                globalThis as unknown as {
-                  BarcodeDetector?: new (opts: { formats: string[] }) => {
-                    detect: (source: ImageBitmap) => Promise<Array<{ rawValue?: string }>>;
-                  };
-                }
-              ).BarcodeDetector;
-              if (!Detector) {
-                setQrNote("Could not scan photo automatically. Paste your https:// link above.");
-                return;
-              }
-              try {
-                const bitmap = await createImageBitmap(file);
-                const detector = new Detector({ formats: ["qr_code"] });
-                const codes = await detector.detect(bitmap);
-                const first = codes[0]?.rawValue;
-                if (!first) {
-                  setQrNote("No QR code found in that image.");
-                  return;
-                }
-                await applyScannedAddress(first);
-              } catch {
-                setQrNote("Could not read that QR image. Paste your https:// link above.");
-              }
-            }}
+          {probes.length > 0 && (
+            <ul className="space-y-1 rounded-xl border border-border/60 bg-secondary/20 p-2.5 text-xs">
+              {probes.map((probe) => (
+                <li key={probe.id} className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">{probe.label}</span>
+                  <span
+                    className={
+                      probe.status === "ok"
+                        ? "text-emerald-400"
+                        : probe.status === "auth" || probe.status === "transport"
+                          ? "text-amber-400"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {formatProbeStatus(probe.status)}
+                    {probe.detail ? ` · ${probe.detail}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DashboardPanel
+            config={config}
+            update={update}
+            onSignedIn={onSignedIn}
+            showModelFields={false}
           />
         </div>
       )}
-      {qrNote && <p className="text-xs text-muted-foreground">{qrNote}</p>}
-      <div className="space-y-2">
-        <Label htmlFor="token">Access token</Label>
-        <Input
-          id="token"
-          type="password"
-          autoCapitalize="none"
-          placeholder="Paste your server token (if required)"
-          value={config.token}
-          onChange={(event) => update({ token: event.target.value })}
-        />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          onClick={onCheck}
-          disabled={checking || !config.baseUrl.trim()}
-          className="flex-1"
-        >
-          {checking ? "Testing connection…" : "Test connection"}
-        </Button>
-        <Button asChild variant="outline">
-          <Link to="/status">Server status</Link>
-        </Button>
-      </div>
-      {probes.length > 0 && (
-        <ul className="space-y-1 rounded-xl border border-border/60 bg-secondary/20 p-2.5 text-xs">
-          {probes.map((probe) => (
-            <li key={probe.id} className="flex items-center justify-between gap-2">
-              <span className="font-medium text-foreground">{probe.label}</span>
-              <span
-                className={
-                  probe.status === "ok"
-                    ? "text-emerald-400"
-                    : probe.status === "auth" || probe.status === "transport"
-                      ? "text-amber-400"
-                      : "text-muted-foreground"
-                }
-              >
-                {formatProbeStatus(probe.status)}
-                {probe.detail ? ` · ${probe.detail}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      <DashboardPanel
-        config={config}
-        update={update}
-        onSignedIn={onSignedIn}
-        showModelFields={false}
-      />
 
       <div className="pt-1">
         <Button

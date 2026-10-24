@@ -919,10 +919,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
           <div className="mx-3 mt-3 rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm">
             <p className="font-medium">Hermes isn't connected yet.</p>
             <p className="mt-1 text-muted-foreground">
-              Add your gateway address and token so this app can talk to your Mac.
+              Scan a pairing QR code from your Hermes dashboard, or enter your server details
+              manually.
             </p>
             <Button asChild size="sm" className="mt-3">
-              <Link to="/settings">Open settings</Link>
+              <Link to="/settings">Scan QR or connect</Link>
             </Button>
           </div>
         )}

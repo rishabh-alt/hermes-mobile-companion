@@ -26,12 +26,82 @@ export function dashboardUrlFromGateway(gatewayUrl: string): string {
   return `${base.origin}/dashboard`;
 }
 
-export function cookieHeader(setCookie: string): string {
-  return setCookie
-    .split(/,(?=\s*[^;,\s]+=)/)
-    .map((part) => part.split(";")[0]?.trim() ?? "")
-    .filter((part) => part.includes("=") && !part.toLowerCase().startsWith("path="))
-    .join("; ");
+const COOKIE_ATTR_NAMES = new Set([
+  "path",
+  "domain",
+  "expires",
+  "max-age",
+  "secure",
+  "httponly",
+  "samesite",
+  "priority",
+  "partitioned",
+]);
+
+export function cookieHeader(setCookie: string | string[]): string {
+  const rawList = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const pairs = new Map<string, string>();
+
+  for (const entry of rawList) {
+    if (!entry) continue;
+    // Split multiple Set-Cookie headers joined by newline or comma (ignoring commas inside Expires=Wed, 21 Oct...)
+    const chunks = entry.split(/\r?\n|,(?=\s*[A-Za-z0-9_.-]+=)/);
+    for (const chunk of chunks) {
+      const firstSegment = chunk.split(";")[0]?.trim() ?? "";
+      const eqIdx = firstSegment.indexOf("=");
+      if (eqIdx <= 0) continue;
+      const name = firstSegment.slice(0, eqIdx).trim();
+      const value = firstSegment.slice(eqIdx + 1).trim();
+      if (!name || COOKIE_ATTR_NAMES.has(name.toLowerCase())) continue;
+      if (!value) {
+        pairs.delete(name);
+      } else {
+        pairs.set(name, `${name}=${value}`);
+      }
+    }
+  }
+  return Array.from(pairs.values()).join("; ");
+}
+
+export function mergeCookieStrings(existing: string, incoming: string): string {
+  const pairs = new Map<string, string>();
+  for (const source of [existing, incoming]) {
+    if (!source) continue;
+    for (const part of source.split(";")) {
+      const trimmed = part.trim();
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx <= 0) continue;
+      const name = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (!name || COOKIE_ATTR_NAMES.has(name.toLowerCase())) continue;
+      if (!value) {
+        pairs.delete(name);
+      } else {
+        pairs.set(name, `${name}=${value}`);
+      }
+    }
+  }
+  return Array.from(pairs.values()).join("; ");
+}
+
+export async function captureResponseCookies(
+  headers: Record<string, string | string[] | undefined> | undefined,
+): Promise<string> {
+  if (!headers) return getDashboardCookie();
+  const rawCandidates: Array<string | string[]> = [];
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "set-cookie" && value !== undefined) {
+      rawCandidates.push(value);
+    }
+  }
+  if (rawCandidates.length === 0) return getDashboardCookie();
+  const flattened = rawCandidates.flatMap((item) => (Array.isArray(item) ? item : [item]));
+  const fresh = cookieHeader(flattened);
+  if (!fresh) return getDashboardCookie();
+  const current = await getDashboardCookie();
+  const merged = mergeCookieStrings(current, fresh);
+  await setDashboardCookie(merged);
+  return merged;
 }
 
 function isRedacted(value: string) {
@@ -94,10 +164,9 @@ async function dashboardRequest(
     readTimeout: 12_000,
     responseType: "text",
   });
-  const fresh = cookieHeader(
-    response.headers?.["set-cookie"] || response.headers?.["Set-Cookie"] || "",
+  await captureResponseCookies(
+    response.headers as Record<string, string | string[] | undefined> | undefined,
   );
-  if (fresh) await setDashboardCookie(cookie ? `${cookie}; ${fresh}` : fresh);
   const text =
     typeof response.data === "string" ? response.data : JSON.stringify(response.data ?? "");
   return { status: response.status, text };
@@ -760,11 +829,15 @@ export function parsePairedDevicesPayload(payload: unknown): PairedDeviceRow[] {
     const lastSeen =
       typeof row["last_seen"] === "string"
         ? row["last_seen"]
-        : typeof row["lastSeen"] === "string"
-          ? row["lastSeen"]
-          : typeof row["created_at"] === "string"
-            ? row["created_at"]
-            : undefined;
+        : typeof row["last_seen_at"] === "string"
+          ? row["last_seen_at"]
+          : typeof row["lastSeen"] === "string"
+            ? row["lastSeen"]
+            : typeof row["paired_at"] === "string"
+              ? row["paired_at"]
+              : typeof row["created_at"] === "string"
+                ? row["created_at"]
+                : undefined;
     const current = row["current"] === true || row["is_current"] === true;
     return [
       {
@@ -817,7 +890,10 @@ export async function readPairedDevices(baseUrl: string): Promise<{
     }
   }
 
-  let response = await dashboardRequest(baseUrl, "/api/gateway/devices", "GET");
+  let response = await dashboardRequest(baseUrl, "/api/plugins/companion-pair/devices", "GET");
+  if (response.status === 404) {
+    response = await dashboardRequest(baseUrl, "/api/gateway/devices", "GET");
+  }
   if (response.status === 404) {
     response = await dashboardRequest(baseUrl, "/api/pairing/devices", "GET");
   }
@@ -841,9 +917,16 @@ export async function revokePairedDevice(baseUrl: string, deviceId: string): Pro
   if (!cleanId) throw new Error("Device ID is required.");
   let response = await dashboardRequest(
     baseUrl,
-    `/api/gateway/devices/${encodeURIComponent(cleanId)}`,
+    `/api/plugins/companion-pair/devices/${encodeURIComponent(cleanId)}`,
     "DELETE",
   );
+  if (response.status === 404 || response.status === 405) {
+    response = await dashboardRequest(
+      baseUrl,
+      `/api/gateway/devices/${encodeURIComponent(cleanId)}`,
+      "DELETE",
+    );
+  }
   if (response.status === 404 || response.status === 405) {
     response = await dashboardRequest(baseUrl, "/api/pairing/revoke", "POST", {
       id: cleanId,
